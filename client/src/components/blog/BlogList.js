@@ -1,5 +1,6 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { Link, useNavigate } from 'react-router-dom';
 import {
     Container,
     Grid,
@@ -9,188 +10,222 @@ import {
     Typography,
     Box,
     Chip,
-    Divider
+    CircularProgress,
+    Button,
+    Stack,
+    Divider,
+    Paper,
+    Avatar
 } from '@mui/material';
-
-// Mock data for smoking cessation blog posts
-const blogPosts = [
-    {
-        id: 1,
-        title: 'Benefits of Quitting Smoking',
-        excerpt: 'The health benefits of quitting smoking can help most of the major parts of your body: from your brain to your DNA.',
-        image: 'https://placehold.co/600x400/3178bd/white?text=Benefits+of+Quitting',
-        authorName: 'Dr. Sarah Johnson',
-        date: 'May 15, 2023',
-        readTime: '8 min read',
-        category: 'Health Benefits'
-    },
-    {
-        id: 2,
-        title: 'Coping Strategies for Nicotine Withdrawal',
-        excerpt: 'Proven techniques to manage cravings and withdrawal symptoms during your journey to become smoke-free.',
-        image: 'https://placehold.co/600x400/3178bd/white?text=Coping+Strategies',
-        authorName: 'Michael Rodriguez, LMHC',
-        date: 'June 2, 2023',
-        readTime: '6 min read',
-        category: 'Quit Techniques'
-    },
-    {
-        id: 3,
-        title: 'Mindfulness Techniques for Smoking Cessation',
-        excerpt: 'How mindfulness and meditation can help you overcome smoking addiction and reduce stress naturally.',
-        image: 'https://placehold.co/600x400/3178bd/white?text=Mindfulness+Techniques',
-        authorName: 'Emma Chen, PhD',
-        date: 'July 10, 2023',
-        readTime: '5 min read',
-        category: 'Mental Health'
-    },
-    {
-        id: 4,
-        title: 'Building a Strong Support System',
-        excerpt: 'The importance of having supportive people around you and how to create a network that helps your quitting journey.',
-        image: 'https://placehold.co/600x400/3178bd/white?text=Support+System',
-        authorName: 'James Wilson',
-        date: 'August 8, 2023',
-        readTime: '7 min read',
-        category: 'Support & Community'
-    },
-    {
-        id: 5,
-        title: 'Nutrition Tips for Ex-Smokers',
-        excerpt: 'Foods that can help detoxify your body, reduce cravings, and prevent weight gain after quitting smoking.',
-        image: 'https://placehold.co/600x400/3178bd/white?text=Nutrition+Tips',
-        authorName: 'Dr. Lisa Patel, RD',
-        date: 'September 15, 2023',
-        readTime: '6 min read',
-        category: 'Nutrition & Wellness'
-    }
-];
+import {
+    Add as AddIcon,
+    Visibility as ViewIcon,
+    Comment as CommentIcon,
+    Person as PersonIcon
+} from '@mui/icons-material';
+import { getBlogPosts } from '../../store/slices/blogSlice';
+import { formatDate } from '../../utils/dateUtils';
 
 const BlogList = () => {
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
+    const { posts, loading, error } = useSelector(state => state.blog);
+    const { user } = useSelector(state => state.auth);
+
+    useEffect(() => {
+        dispatch(getBlogPosts());
+    }, [dispatch]);
+
+    if (loading) {
+        return (
+            <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+                <CircularProgress size={60} />
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Container maxWidth="lg" sx={{ py: 4 }}>
+                <Paper elevation={3} sx={{ p: 4, textAlign: 'center', bgcolor: 'error.light' }}>
+                    <Typography variant="h6" color="white">
+                        {error}
+                    </Typography>
+                    <Button
+                        variant="contained"
+                        sx={{ mt: 2 }}
+                        onClick={() => dispatch(getBlogPosts())}
+                    >
+                        Thử lại
+                    </Button>
+                </Paper>
+            </Container>
+        );
+    }
+
     return (
-        <>
-            {/* Hero Section */}
-            <Box sx={{ bgcolor: '#3178bd', color: 'white', py: 6 }}>
-                <Container maxWidth="lg">
-                    <Typography variant="h3" component="h1" gutterBottom fontWeight="bold">
-                        Smoking Cessation Resources
+        <Container maxWidth="lg" sx={{ py: 4 }}>
+            {/* Header Section */}
+            <Box sx={{ mb: 4 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                    <Typography
+                        variant="h3"
+                        component="h1"
+                        sx={{
+                            fontWeight: 'bold',
+                            background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                            backgroundClip: 'text',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                        }}
+                    >
+                        Blog SmokieKing
                     </Typography>
-                    <Typography variant="h6" sx={{ maxWidth: '800px', mb: 3 }}>
-                        Expert advice, research-backed strategies, and personal stories to help you 
-                        on your journey to becoming smoke-free.
-                    </Typography>
-                </Container>
+                    {user && (
+                        <Button
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={() => navigate('/blog/new')}
+                            sx={{
+                                background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
+                                borderRadius: '20px',
+                                px: 3
+                            }}
+                        >
+                            Viết bài mới
+                        </Button>
+                    )}
+                </Stack>
+                <Typography variant="h6" color="text.secondary" sx={{ mb: 3 }}>
+                    Chia sẻ hành trình cai thuốc và truyền cảm hứng cho cộng đồng
+                </Typography>
+                <Divider />
             </Box>
 
-            <Container maxWidth="lg" sx={{ py: 6 }}>
-                {/* Featured Post */}
-                <Box component={Link} to={`/blog/${blogPosts[0].id}`} sx={{ textDecoration: 'none', color: 'inherit', display: 'block', mb: 6 }}>
-                    <Card sx={{ display: { xs: 'block', md: 'flex' }, overflow: 'hidden' }}>
-                        <CardMedia
-                            component="img"
-                            sx={{ 
-                                width: { xs: '100%', md: '50%' }, 
-                                height: { xs: 240, md: 'auto' }
-                            }}
-                            image={blogPosts[0].image}
-                            alt={blogPosts[0].title}
-                        />
-                        <Box sx={{ flex: 1 }}>
-                            <CardContent sx={{ p: 4 }}>
-                                <Chip 
-                                    label={blogPosts[0].category} 
-                                    color="primary" 
-                                    size="small" 
-                                    sx={{ mb: 2 }} 
-                                />
-                                <Typography variant="h4" component="h2" gutterBottom fontWeight="bold">
-                                    {blogPosts[0].title}
-                                </Typography>
-                                <Typography variant="body1" paragraph color="text.secondary">
-                                    {blogPosts[0].excerpt}
-                                </Typography>
-                                <Box sx={{ display: 'flex', alignItems: 'center', mt: 2 }}>
-                                    <Typography variant="subtitle2" sx={{ mr: 2 }}>
-                                        {blogPosts[0].authorName}
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                        {blogPosts[0].date} · {blogPosts[0].readTime}
-                                    </Typography>
-                                </Box>
-                            </CardContent>
-                        </Box>
-                    </Card>
-                </Box>
-
-                <Typography variant="h5" component="h3" gutterBottom fontWeight="bold" sx={{ mb: 3 }}>
-                    Latest Articles
-                </Typography>
-                <Divider sx={{ mb: 4 }} />
-
-                {/* Article Grid */}
+            {/* Blog Posts Grid */}
+            {posts.length === 0 ? (
+                <Paper elevation={2} sx={{ p: 6, textAlign: 'center' }}>
+                    <Typography variant="h5" color="text.secondary" gutterBottom>
+                        Chưa có bài viết nào
+                    </Typography>
+                    <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                        Hãy là người đầu tiên chia sẻ câu chuyện của bạn!
+                    </Typography>
+                    {user && (
+                        <Button
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={() => navigate('/blog/new')}
+                            size="large"
+                        >
+                            Viết bài đầu tiên
+                        </Button>
+                    )}
+                </Paper>
+            ) : (
                 <Grid container spacing={4}>
-                    {blogPosts.slice(1).map((post) => (
-                        <Grid item key={post.id} xs={12} sm={6} md={3}>
+                    {posts.map((post) => (
+                        <Grid item key={post.PostID} xs={12} md={6} lg={4}>
                             <Card
-                                component={Link}
-                                to={`/blog/${post.id}`}
                                 sx={{
                                     height: '100%',
                                     display: 'flex',
                                     flexDirection: 'column',
-                                    textDecoration: 'none',
-                                    color: 'inherit',
-                                    transition: 'transform 0.3s, box-shadow 0.3s',
+                                    transition: 'all 0.3s ease-in-out',
+                                    cursor: 'pointer',
                                     '&:hover': {
                                         transform: 'translateY(-8px)',
-                                        boxShadow: 6
+                                        boxShadow: '0 12px 20px rgba(0,0,0,0.15)'
                                     }
                                 }}
+                                onClick={() => navigate(`/blog/${post.PostID}`)}
                             >
                                 <CardMedia
                                     component="img"
-                                    height="180"
-                                    image={post.image}
-                                    alt={post.title}
+                                    height="220"
+                                    image={post.ThumbnailURL || '/api/images/default-blog.svg'}
+                                    alt={post.Title}
+                                    sx={{
+                                        borderRadius: '8px 8px 0 0',
+                                        objectFit: 'cover'
+                                    }}
+                                    onError={(e) => {
+                                        e.target.onerror = null;
+                                        e.target.src = '/api/images/default-blog.svg';
+                                    }}
                                 />
                                 <CardContent sx={{ flexGrow: 1, p: 3 }}>
-                                    <Typography variant="overline" color="primary.main">
-                                        {post.category}
-                                    </Typography>
                                     <Typography
                                         gutterBottom
                                         variant="h6"
                                         component="h2"
-                                        fontWeight="bold"
-                                        sx={{ minHeight: '3em' }}
-                                    >
-                                        {post.title}
-                                    </Typography>
-                                    <Typography
-                                        variant="body2"
-                                        color="text.secondary"
                                         sx={{
+                                            fontWeight: 'bold',
+                                            mb: 2,
+                                            display: '-webkit-box',
+                                            WebkitLineClamp: 2,
+                                            WebkitBoxOrient: 'vertical',
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
-                                            display: '-webkit-box',
-                                            WebkitLineClamp: 3,
-                                            WebkitBoxOrient: 'vertical',
-                                            mb: 2
+                                            minHeight: '3.2em'
                                         }}
                                     >
-                                        {post.excerpt}
+                                        {post.Title}
                                     </Typography>
-                                    <Box sx={{ 
-                                        display: 'flex', 
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center', 
-                                        mt: 'auto' 
-                                    }}>
-                                        <Typography variant="caption" color="text.secondary">
-                                            {post.date}
+
+                                    {post.MetaDescription && (
+                                        <Typography
+                                            variant="body2"
+                                            color="text.secondary"
+                                            sx={{
+                                                mb: 2,
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 3,
+                                                WebkitBoxOrient: 'vertical',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                minHeight: '4.5em'
+                                            }}
+                                        >
+                                            {post.MetaDescription}
                                         </Typography>
-                                        <Typography variant="caption" color="primary.main" fontWeight="medium">
-                                            Read More
+                                    )}
+
+                                    {/* Author Info */}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                                        <Avatar sx={{ width: 32, height: 32, mr: 1, bgcolor: 'primary.main' }}>
+                                            <PersonIcon />
+                                        </Avatar>
+                                        <Typography variant="body2" color="text.secondary">
+                                            {post.AuthorFirstName} {post.AuthorLastName}
+                                        </Typography>
+                                    </Box>
+
+                                    {/* Post Stats */}
+                                    <Box sx={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        mt: 'auto'
+                                    }}>
+                                        <Stack direction="row" spacing={1}>
+                                            <Chip
+                                                icon={<ViewIcon sx={{ fontSize: '16px !important' }} />}
+                                                label={post.Views || 0}
+                                                size="small"
+                                                variant="outlined"
+                                                color="primary"
+                                            />
+                                            <Chip
+                                                icon={<CommentIcon sx={{ fontSize: '16px !important' }} />}
+                                                label={post.CommentCount || 0}
+                                                size="small"
+                                                variant="outlined"
+                                                color="secondary"
+                                            />
+                                        </Stack>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {formatDate(post.CreatedAt)}
                                         </Typography>
                                     </Box>
                                 </CardContent>
@@ -198,29 +233,29 @@ const BlogList = () => {
                         </Grid>
                     ))}
                 </Grid>
+            )}
 
-                {/* Categories Section */}
-                <Box sx={{ mt: 8, mb: 4 }}>
-                    <Typography variant="h5" component="h3" gutterBottom fontWeight="bold">
-                        Browse By Category
+            {/* Call to Action */}
+            {posts.length > 0 && user && (
+                <Box sx={{ textAlign: 'center', mt: 6 }}>
+                    <Typography variant="h5" gutterBottom>
+                        Bạn có câu chuyện để chia sẻ?
                     </Typography>
-                    <Divider sx={{ mb: 3 }} />
-                    <Grid container spacing={2}>
-                        {['Health Benefits', 'Quit Techniques', 'Mental Health', 'Support & Community', 'Nutrition & Wellness'].map((category) => (
-                            <Grid item key={category}>
-                                <Chip 
-                                    label={category} 
-                                    color="primary" 
-                                    variant="outlined" 
-                                    clickable
-                                    sx={{ px: 1 }}
-                                />
-                            </Grid>
-                        ))}
-                    </Grid>
+                    <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                        Hãy viết về hành trình cai thuốc của bạn để truyền cảm hứng cho những người khác
+                    </Typography>
+                    <Button
+                        variant="outlined"
+                        size="large"
+                        startIcon={<AddIcon />}
+                        onClick={() => navigate('/blog/new')}
+                        sx={{ borderRadius: '20px', px: 4 }}
+                    >
+                        Chia sẻ câu chuyện
+                    </Button>
                 </Box>
-            </Container>
-        </>
+            )}
+        </Container>
     );
 };
 

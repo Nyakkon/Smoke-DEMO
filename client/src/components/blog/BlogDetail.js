@@ -1,206 +1,385 @@
-import React from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import {
     Container,
     Typography,
     Box,
     Paper,
-    Divider,
+    TextField,
     Button,
-    Breadcrumbs,
+    Avatar,
+    Divider,
+    CircularProgress,
+    Alert,
     Chip,
-    Grid
+    Stack,
+    IconButton,
+    Menu,
+    MenuItem
 } from '@mui/material';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-
-// Dữ liệu mẫu cho các bài blog
-const blogPosts = [
-    {
-        id: 1,
-        title: 'Benefits of Quitting Smoking',
-        image: 'https://placehold.co/800x400/3178bd/white?text=Benefits+of+Quitting',
-        author: 'Dr. Sarah Johnson',
-        date: 'May 15, 2023',
-        category: 'Health Benefits',
-        content: `
-            <p>The health benefits of quitting smoking can help most of the major parts of your body: from your brain to your DNA. The moment you stop smoking, your body begins to heal itself.</p>
-            
-            <h3>Brain</h3>
-            <p>Quitting smoking can re-wire your brain and help break the cycle of addiction. The large number of nicotine receptors in your brain will return to normal levels after about a month of being quit.</p>
-            
-            <h3>Head and Face</h3>
-            <p>Quitting smoking will keep your hearing sharp. Remember, even mild hearing loss can cause problems. Stopping smoking will improve your night vision and help preserve your overall vision by stopping the damage that smoking does to your eyes.</p>
-            
-            <h3>Heart</h3>
-            <p>Smoking is the leading cause of heart attacks and heart disease. But many of these heart risks can be reversed simply by quitting smoking. Quitting can lower your blood pressure and heart rate almost immediately. Your risk of a heart attack declines within 24 hours.</p>
-            
-            <h3>Lungs</h3>
-            <p>Scarring of the lungs is not reversible. That is why it is important to quit smoking before you do permanent damage to your lungs. Within two weeks of quitting, you might notice it's easier to walk up the stairs because you may be less short of breath.</p>
-            
-            <h3>DNA</h3>
-            <p>Quitting smoking will prevent new DNA damage from happening and can even help repair the damage that has already been done. Quitting smoking immediately is the best way to lower your risk of getting cancer.</p>
-            
-            <h3>Conclusion</h3>
-            <p>Quitting smoking is one of the most important things you can do for your health. The benefits begin within minutes of your last cigarette and continue to grow as time passes.</p>
-        `
-    },
-    {
-        id: 2,
-        title: 'Coping Strategies for Nicotine Withdrawal',
-        image: 'https://placehold.co/800x400/3178bd/white?text=Coping+Strategies',
-        author: 'Michael Rodriguez, LMHC',
-        date: 'June 2, 2023',
-        category: 'Quit Techniques',
-        content: `
-            <p>When you quit smoking, your body goes through nicotine withdrawal, which can be challenging but manageable with the right strategies.</p>
-            
-            <h3>Understanding Nicotine Withdrawal</h3>
-            <p>Nicotine withdrawal occurs when you stop using tobacco products after your body has become dependent on nicotine. Symptoms typically begin within a few hours of your last cigarette and peak within the first few days.</p>
-            
-            <h3>The 4 Ds Method</h3>
-            <p>When cravings hit, remember the 4 Ds: Delay, Deep breathe, Drink water, and Do something else. Delay acting on the urge to smoke; cravings typically pass within 3-5 minutes.</p>
-            
-            <h3>Physical Activity</h3>
-            <p>Exercise is one of the most effective ways to cope with nicotine withdrawal. Even short bursts of physical activity can reduce cravings and improve mood by releasing endorphins, the body's natural feel-good chemicals.</p>
-            
-            <h3>Conclusion</h3>
-            <p>Remember that quitting smoking is a process, not an event. There may be setbacks along the way, but each attempt brings you closer to becoming smoke-free.</p>
-        `
-    },
-    {
-        id: 3,
-        title: 'Mindfulness Techniques for Smoking Cessation',
-        image: 'https://placehold.co/800x400/3178bd/white?text=Mindfulness+Techniques',
-        author: 'Emma Chen, PhD',
-        date: 'July 10, 2023',
-        category: 'Mental Health',
-        content: `
-            <p>Mindfulness practices can be powerful tools in your journey to quit smoking. By bringing awareness to your cravings, thoughts, and emotions without judgment, you can develop a healthier relationship with yourself.</p>
-            
-            <h3>What is Mindfulness?</h3>
-            <p>Mindfulness is the practice of paying attention to the present moment with curiosity, openness, and acceptance. It involves observing your thoughts, feelings, bodily sensations, and surrounding environment without judgment.</p>
-            
-            <h3>RAIN Technique for Cravings</h3>
-            <p>RAIN is a mindfulness technique particularly helpful for managing cigarette cravings. R - Recognize when a craving appears. A - Allow the craving to be there without trying to push it away or giving in to it. I - Investigate with interest how the craving feels in your body. N - Non-identification means understanding that you are not your craving.</p>
-            
-            <h3>Conclusion</h3>
-            <p>Incorporating mindfulness into your smoking cessation plan can significantly increase your chances of quitting successfully and staying smoke-free.</p>
-        `
-    },
-    {
-        id: 4,
-        title: 'Building a Strong Support System',
-        image: 'https://placehold.co/800x400/3178bd/white?text=Support+System',
-        author: 'James Wilson',
-        date: 'August 8, 2023',
-        category: 'Support & Community',
-        content: `
-            <p>Quitting smoking is challenging, but you don't have to face it alone. A strong support system can significantly increase your chances of successfully quitting and staying smoke-free.</p>
-            
-            <h3>The Power of Social Support</h3>
-            <p>Research consistently shows that smokers who have strong social support are more likely to successfully quit and remain smoke-free. Support from others can provide encouragement, accountability, practical help, and emotional comfort during difficult moments.</p>
-            
-            <h3>Family and Friends</h3>
-            <p>Start by having honest conversations with your closest family members and friends about your decision to quit smoking. Be specific about how they can help you—whether it's checking in regularly, providing distractions during cravings, or simply being understanding if you're irritable during withdrawal.</p>
-            
-            <h3>Conclusion</h3>
-            <p>Building a comprehensive support system is one of the most important steps you can take when quitting smoking. Remember that seeking support isn't a sign of weakness—it's a smart strategy that significantly improves your chances of becoming smoke-free for good.</p>
-        `
-    },
-    {
-        id: 5,
-        title: 'Nutrition Tips for Ex-Smokers',
-        image: 'https://placehold.co/800x400/3178bd/white?text=Nutrition+Tips',
-        author: 'Dr. Lisa Patel, RD',
-        date: 'September 15, 2023',
-        category: 'Nutrition & Wellness',
-        content: `
-            <p>When you quit smoking, your body begins an amazing healing process. Proper nutrition during this time can support this healing, help manage cravings, and prevent weight gain.</p>
-            
-            <h3>Antioxidant-Rich Foods</h3>
-            <p>Smoking causes oxidative stress and depletes antioxidants in your body. Consuming antioxidant-rich foods can help repair this damage and support healing. Focus on eating a rainbow of fruits and vegetables, which contain different types of antioxidants.</p>
-            
-            <h3>Hydration and Detoxification</h3>
-            <p>Staying well-hydrated helps your body flush out toxins and can reduce the intensity of nicotine cravings. Water is the best choice, but herbal teas can also contribute to your fluid intake while providing additional health benefits.</p>
-            
-            <h3>Conclusion</h3>
-            <p>Good nutrition is a powerful ally in your journey to become smoke-free. By focusing on antioxidant-rich foods, staying well-hydrated, managing oral fixation with healthy alternatives, and stabilizing blood sugar, you can support your body's healing process.</p>
-        `
-    }
-];
+import {
+    Visibility as ViewIcon,
+    Comment as CommentIcon,
+    Share as ShareIcon,
+    MoreVert as MoreVertIcon,
+    Edit as EditIcon,
+    Delete as DeleteIcon,
+    ArrowBack as ArrowBackIcon
+} from '@mui/icons-material';
+import { getBlogPost, getComments, addComment, deleteBlogPost, clearCurrentPost } from '../../store/slices/blogSlice';
+import { formatDate } from '../../utils/dateUtils';
 
 const BlogDetail = () => {
     const { postId } = useParams();
-    const post = blogPosts.find(post => post.id === parseInt(postId)) || blogPosts[0];
+    const navigate = useNavigate();
+    const dispatch = useDispatch();
+    const { currentPost, comments, loading, error, success } = useSelector(state => state.blog);
+    const { user } = useSelector(state => state.auth);
+    const [comment, setComment] = useState('');
+    const [anchorEl, setAnchorEl] = useState(null);
+
+    useEffect(() => {
+        dispatch(getBlogPost(postId));
+        dispatch(getComments(postId));
+
+        return () => {
+            dispatch(clearCurrentPost());
+        };
+    }, [dispatch, postId]);
+
+    useEffect(() => {
+        if (success) {
+            navigate('/blog');
+        }
+    }, [success, navigate]);
+
+    const handleSubmitComment = (e) => {
+        e.preventDefault();
+        if (comment.trim()) {
+            dispatch(addComment({ postId, content: comment }));
+            setComment('');
+        }
+    };
+
+    const handleMenuOpen = (event) => {
+        setAnchorEl(event.currentTarget);
+    };
+
+    const handleMenuClose = () => {
+        setAnchorEl(null);
+    };
+
+    const handleEdit = () => {
+        navigate(`/blog/edit/${postId}`);
+        handleMenuClose();
+    };
+
+    const handleDelete = () => {
+        if (window.confirm('Bạn có chắc chắn muốn xóa bài viết này?')) {
+            dispatch(deleteBlogPost(postId));
+        }
+        handleMenuClose();
+    };
+
+    const handleShare = () => {
+        if (navigator.share) {
+            navigator.share({
+                title: currentPost.Title,
+                text: currentPost.MetaDescription || currentPost.Title,
+                url: window.location.href,
+            });
+        } else {
+            navigator.clipboard.writeText(window.location.href);
+            alert('Link đã được sao chép vào clipboard!');
+        }
+    };
+
+    if (loading) {
+        return (
+            <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+                <CircularProgress size={60} />
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Container maxWidth="lg" sx={{ py: 4 }}>
+                <Paper elevation={3} sx={{ p: 4, textAlign: 'center', bgcolor: 'error.light' }}>
+                    <Typography variant="h6" color="white">
+                        {error}
+                    </Typography>
+                    <Button
+                        variant="contained"
+                        sx={{ mt: 2 }}
+                        onClick={() => navigate('/blog')}
+                    >
+                        Quay lại danh sách
+                    </Button>
+                </Paper>
+            </Container>
+        );
+    }
+
+    if (!currentPost) {
+        return (
+            <Container maxWidth="lg" sx={{ py: 4 }}>
+                <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
+                    <Typography variant="h6" color="text.secondary">
+                        Không tìm thấy bài viết
+                    </Typography>
+                    <Button
+                        variant="contained"
+                        sx={{ mt: 2 }}
+                        onClick={() => navigate('/blog')}
+                    >
+                        Quay lại danh sách
+                    </Button>
+                </Paper>
+            </Container>
+        );
+    }
+
+    const isAuthor = user && user.UserID === currentPost.AuthorID;
 
     return (
         <Container maxWidth="lg" sx={{ py: 4 }}>
-            {/* Breadcrumbs */}
-            <Breadcrumbs sx={{ mb: 4 }}>
-                <Link to="/" style={{ textDecoration: 'none', color: 'inherit' }}>
-                    Home
-                </Link>
-                <Link to="/blog" style={{ textDecoration: 'none', color: 'inherit' }}>
-                    Blog
-                </Link>
-                <Typography color="text.primary">{post.title}</Typography>
-            </Breadcrumbs>
+            {/* Back Button */}
+            <Button
+                startIcon={<ArrowBackIcon />}
+                onClick={() => navigate('/blog')}
+                sx={{ mb: 3 }}
+            >
+                Quay lại danh sách
+            </Button>
 
-            <Paper elevation={0} sx={{ p: 4, mb: 4 }}>
-                {/* Category */}
-                <Chip 
-                    label={post.category} 
-                    color="primary" 
-                    size="small" 
-                    sx={{ mb: 2 }} 
-                />
-                
-                {/* Title */}
-                <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
-                    {post.title}
-                </Typography>
-                
-                {/* Author and date */}
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                    <Typography variant="subtitle1" fontWeight="medium">
-                        {post.author}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
-                        {post.date}
-                    </Typography>
+            {/* Blog Post */}
+            <Paper elevation={3} sx={{ p: 4, mb: 4, borderRadius: 2 }}>
+                {/* Header */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+                    <Box sx={{ flex: 1 }}>
+                        <Typography
+                            variant="h3"
+                            component="h1"
+                            gutterBottom
+                            sx={{
+                                fontWeight: 'bold',
+                                background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                                backgroundClip: 'text',
+                                WebkitBackgroundClip: 'text',
+                                WebkitTextFillColor: 'transparent',
+                                mb: 2
+                            }}
+                        >
+                            {currentPost.Title}
+                        </Typography>
+
+                        {/* Meta Description */}
+                        {currentPost.MetaDescription && (
+                            <Typography
+                                variant="h6"
+                                color="text.secondary"
+                                sx={{ mb: 3, fontStyle: 'italic' }}
+                            >
+                                {currentPost.MetaDescription}
+                            </Typography>
+                        )}
+                    </Box>
+
+                    {/* Action Buttons */}
+                    <Stack direction="row" spacing={1}>
+                        <IconButton onClick={handleShare} color="primary">
+                            <ShareIcon />
+                        </IconButton>
+                        {isAuthor && (
+                            <>
+                                <IconButton onClick={handleMenuOpen}>
+                                    <MoreVertIcon />
+                                </IconButton>
+                                <Menu
+                                    anchorEl={anchorEl}
+                                    open={Boolean(anchorEl)}
+                                    onClose={handleMenuClose}
+                                >
+                                    <MenuItem onClick={handleEdit}>
+                                        <EditIcon sx={{ mr: 1 }} />
+                                        Chỉnh sửa
+                                    </MenuItem>
+                                    <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
+                                        <DeleteIcon sx={{ mr: 1 }} />
+                                        Xóa bài viết
+                                    </MenuItem>
+                                </Menu>
+                            </>
+                        )}
+                    </Stack>
                 </Box>
-                
-                {/* Featured image */}
-                <Box
-                    component="img"
-                    src={post.image}
-                    alt={post.title}
-                    sx={{
-                        width: '100%',
-                        borderRadius: 2,
-                        mb: 4
-                    }}
-                />
-                
+
+                {/* Author Info & Stats */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <Avatar
+                            sx={{ mr: 2, bgcolor: 'primary.main', width: 48, height: 48 }}
+                        >
+                            {currentPost.AuthorFirstName?.charAt(0)}
+                        </Avatar>
+                        <Box>
+                            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                {`${currentPost.AuthorFirstName} ${currentPost.AuthorLastName}`}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                {formatDate(currentPost.CreatedAt)}
+                            </Typography>
+                        </Box>
+                    </Box>
+
+                    <Stack direction="row" spacing={1}>
+                        <Chip
+                            icon={<ViewIcon />}
+                            label={`${currentPost.Views || 0} lượt xem`}
+                            variant="outlined"
+                            color="primary"
+                        />
+                        <Chip
+                            icon={<CommentIcon />}
+                            label={`${comments.length} bình luận`}
+                            variant="outlined"
+                            color="secondary"
+                        />
+                    </Stack>
+                </Box>
+
+                <Divider sx={{ mb: 3 }} />
+
+                {/* Featured Image */}
+                {currentPost.ThumbnailURL && (
+                    <Box
+                        component="img"
+                        src={currentPost.ThumbnailURL}
+                        alt={currentPost.Title}
+                        sx={{
+                            width: '100%',
+                            maxHeight: '500px',
+                            objectFit: 'cover',
+                            borderRadius: 2,
+                            mb: 4,
+                            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+                        }}
+                        onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = '/api/images/default-blog.svg';
+                        }}
+                    />
+                )}
+
                 {/* Content */}
-                <Box 
-                    dangerouslySetInnerHTML={{ __html: post.content }} 
-                    sx={{ 
-                        '& p': { mb: 2, lineHeight: 1.7 },
-                        '& h3': { mt: 4, mb: 2, color: 'primary.main', fontWeight: 'bold' }
+                <Typography
+                    variant="body1"
+                    sx={{
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.8,
+                        fontSize: '1.1rem',
+                        color: 'text.primary'
                     }}
-                />
+                >
+                    {currentPost.Content}
+                </Typography>
             </Paper>
 
-            {/* Back button */}
-            <Button 
-                startIcon={<ArrowBackIcon />} 
-                component={Link} 
-                to="/blog" 
-                sx={{ mb: 4 }}
-            >
-                Back to all articles
-            </Button>
+            {/* Comments Section */}
+            <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
+                <Typography variant="h5" gutterBottom sx={{
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1
+                }}>
+                    <CommentIcon />
+                    Bình luận ({comments.length})
+                </Typography>
+                <Divider sx={{ mb: 3 }} />
+
+                {/* Comment Form */}
+                {user ? (
+                    <Box component="form" onSubmit={handleSubmitComment} sx={{ mb: 4 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                            <Avatar sx={{ bgcolor: 'primary.main' }}>
+                                {user.FirstName?.charAt(0)}
+                            </Avatar>
+                            <TextField
+                                fullWidth
+                                multiline
+                                rows={3}
+                                placeholder="Viết bình luận của bạn..."
+                                value={comment}
+                                onChange={(e) => setComment(e.target.value)}
+                                variant="outlined"
+                            />
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <Button
+                                type="submit"
+                                variant="contained"
+                                disabled={!comment.trim()}
+                                sx={{ borderRadius: '20px', px: 3 }}
+                            >
+                                Đăng bình luận
+                            </Button>
+                        </Box>
+                    </Box>
+                ) : (
+                    <Box sx={{ textAlign: 'center', py: 3, mb: 4, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Typography variant="body1" color="text.secondary">
+                            Vui lòng đăng nhập để bình luận
+                        </Typography>
+                        <Button
+                            variant="contained"
+                            sx={{ mt: 2 }}
+                            onClick={() => navigate('/login')}
+                        >
+                            Đăng nhập
+                        </Button>
+                    </Box>
+                )}
+
+                {/* Comments List */}
+                {comments.length > 0 ? (
+                    comments.map((comment, index) => (
+                        <Box key={comment.CommentID}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, py: 2 }}>
+                                <Avatar sx={{ bgcolor: 'secondary.main' }}>
+                                    {comment.FirstName?.charAt(0)}
+                                </Avatar>
+                                <Box sx={{ flex: 1 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                                        <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                                            {`${comment.FirstName} ${comment.LastName}`}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {formatDate(comment.CreatedAt)}
+                                        </Typography>
+                                    </Box>
+                                    <Typography variant="body1" sx={{ lineHeight: 1.6 }}>
+                                        {comment.CommentText}
+                                    </Typography>
+                                </Box>
+                            </Box>
+                            {index < comments.length - 1 && <Divider />}
+                        </Box>
+                    ))
+                ) : (
+                    <Box sx={{ textAlign: 'center', py: 6 }}>
+                        <CommentIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+                        <Typography variant="h6" color="text.secondary" gutterBottom>
+                            Chưa có bình luận nào
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            Hãy là người đầu tiên bình luận về bài viết này!
+                        </Typography>
+                    </Box>
+                )}
+            </Paper>
         </Container>
     );
 };
