@@ -56,62 +56,105 @@ const MemberDashboard = () => {
         try {
             setLoading(true);
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
+
             if (!token) {
-                navigate('/auth');
+                message.error('Vui lòng đăng nhập lại');
+                navigate('/login');
                 return;
             }
 
-            // Load real data from API
+            let userProfile = null;
+            let progressData = null;
+            let streakData = {};
+
+            // Get user profile
             try {
-                // Get progress summary for smoking stats
+                const profileResponse = await axios.get('http://localhost:4000/api/user/profile', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (profileResponse.data.success) {
+                    userProfile = profileResponse.data.data.userInfo;
+                }
+            } catch (profileError) {
+                console.error('Failed to load user profile:', profileError.response?.data?.message);
+                // Use fallback user data only if profile fails
+                userProfile = {
+                    id: 1,
+                    firstName: 'Member',
+                    lastName: 'User',
+                    email: 'member@example.com',
+                    avatar: null
+                };
+            }
+
+            // Get progress data 
+            try {
                 const progressResponse = await axios.get('http://localhost:4000/api/progress/summary', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
 
-                // Get streak information
+                if (progressResponse.data.success) {
+                    progressData = progressResponse.data.data;
+                }
+            } catch (progressError) {
+                console.error('Failed to load progress data:', progressError.response?.data?.message);
+                // Set empty progress data if API fails
+                progressData = {
+                    SmokeFreeDays: 0,
+                    CigarettesNotSmoked: 0,
+                    TotalMoneySaved: 0,
+                    TotalDaysTracked: 0
+                };
+            }
+
+            // Get streak information
+            try {
                 const streakResponse = await axios.get('http://localhost:4000/api/progress/streak', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
 
-                // Get user profile
-                const profileResponse = await axios.get('http://localhost:4000/api/users/profile', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-
-                if (progressResponse.data.success && profileResponse.data.success) {
-                    const progressData = progressResponse.data.data;
-                    const streakData = streakResponse.data.success ? streakResponse.data.data : {};
-                    const userProfile = profileResponse.data.data.userInfo;
-
-                    setMemberInfo({
-                        id: userProfile.id,
-                        firstName: userProfile.firstName,
-                        lastName: userProfile.lastName,
-                        email: userProfile.email,
-                        avatar: userProfile.avatar,
-                        smokingStatus: {
-                            daysSinceQuit: streakData.currentStreak || progressData.SmokeFreeDays || 0,
-                            cigarettesAvoided: progressData.CigarettesNotSmoked || 0,
-                        }
-                    });
-                } else {
-                    throw new Error('Failed to load progress data');
+                if (streakResponse.data.success) {
+                    streakData = streakResponse.data.data;
                 }
+            } catch (streakError) {
+                console.error('Failed to load streak data:', streakError.response?.data?.message);
+                streakData = { currentStreak: 0, longestStreak: 0 };
+            }
 
-            } catch (apiError) {
-                console.error('Error loading real data:', apiError);
-                message.warning('Không thể tải dữ liệu từ server. Hiển thị dữ liệu demo...');
-
-                // Fallback to mock data if API fails (without hardcoded money)
+            // Set member info with real data
+            if (userProfile && progressData) {
+                setMemberInfo({
+                    id: userProfile.id,
+                    firstName: userProfile.firstName,
+                    lastName: userProfile.lastName,
+                    email: userProfile.email,
+                    avatar: userProfile.avatar,
+                    smokingStatus: {
+                        daysSinceQuit: progressData.SmokeFreeDays || 0,
+                        cigarettesAvoided: progressData.CigarettesNotSmoked || 0,
+                        moneySaved: progressData.TotalMoneySaved || 0,
+                        currentStreak: streakData.currentStreak || 0,
+                        longestStreak: streakData.longestStreak || 0,
+                        totalDaysTracked: progressData.TotalDaysTracked || 0
+                    }
+                });
+            } else {
+                // Only use fallback if both API calls fail
+                console.warn('Using fallback member data - API calls failed');
                 setMemberInfo({
                     id: 1,
-                    firstName: 'Nguyễn',
-                    lastName: 'Văn A',
+                    firstName: 'Member',
+                    lastName: 'User',
                     email: 'member@example.com',
                     avatar: null,
                     smokingStatus: {
-                        daysSinceQuit: 7,
-                        cigarettesAvoided: 70,
+                        daysSinceQuit: 0,
+                        cigarettesAvoided: 0,
+                        moneySaved: 0,
+                        currentStreak: 0,
+                        longestStreak: 0,
+                        totalDaysTracked: 0
                     }
                 });
             }
@@ -148,6 +191,14 @@ const MemberDashboard = () => {
         }
     };
 
+    if (loading) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+                <Spin size="large" />
+            </div>
+        );
+    }
+
     return (
         <Layout style={{ minHeight: '100vh' }}>
             <Layout>
@@ -178,10 +229,11 @@ const MemberDashboard = () => {
 
                             <Row gutter={[8, 8]}>
                                 <Col span={24}>
-                                    <Statistic
-                                        title="Điếu thuốc tránh được"
-                                        value={memberInfo.smokingStatus.cigarettesAvoided}
-                                        prefix={<HeartOutlined />}
+                                    <SavingsDisplay
+                                        title="Điều thuốc tránh được"
+                                        displayType="cigarettes"
+                                        showDetails={false}
+                                        style={{ textAlign: 'center' }}
                                         valueStyle={{ color: '#cf1322', fontSize: 16 }}
                                     />
                                 </Col>
@@ -189,11 +241,12 @@ const MemberDashboard = () => {
                                     {/* Use unified SavingsDisplay component */}
                                     <SavingsDisplay
                                         title="Tiền tiết kiệm"
+                                        displayType="money"
                                         showDetails={false}
                                         style={{ textAlign: 'center' }}
                                         valueStyle={{ color: '#389e0d', fontSize: 16 }}
                                         prefix={<DollarOutlined />}
-                                        suffix="VNĐ"
+                                        suffix="VND"
                                     />
                                 </Col>
                             </Row>

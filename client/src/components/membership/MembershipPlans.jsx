@@ -462,7 +462,7 @@ const MembershipPlans = () => {
                             disabled={loading}
                             onClick={() => handleSelectPlan(record)}
                         >
-                            Subscribe Now
+                            Mua gói
                         </Button>
                     ) : (
                         <Button disabled={true}>

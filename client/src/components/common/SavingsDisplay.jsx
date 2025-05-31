@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Statistic, Alert, Spin } from 'antd';
-import { DollarOutlined } from '@ant-design/icons';
+import { Statistic, Alert, Spin, Typography } from 'antd';
+import { DollarOutlined, HeartOutlined } from '@ant-design/icons';
 import axios from 'axios';
+
+const { Text } = Typography;
 
 const SavingsDisplay = ({
     title = "Tiền tiết kiệm",
+    displayType = "money", // "money" | "cigarettes"
     showDetails = false,
     style = {},
     valueStyle = { color: '#52c41a' },
     prefix = <DollarOutlined />,
-    suffix = "VNĐ"
+    suffix = "VND"
 }) => {
     const [savingsData, setSavingsData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -25,53 +28,38 @@ const SavingsDisplay = ({
             setError(null);
 
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
-
-            let response;
-
-            if (token) {
-                try {
-                    // Try authenticated endpoint first
-                    response = await axios.get('http://localhost:4000/api/progress/summary', {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                } catch (authError) {
-                    // Fallback to public endpoint if auth fails
-                    console.warn('Auth failed, using public endpoint:', authError.response?.status);
-                    response = await axios.get('http://localhost:4000/api/progress/public-summary');
-                }
-            } else {
-                // Use public endpoint if no token
-                response = await axios.get('http://localhost:4000/api/progress/public-summary');
+            if (!token) {
+                throw new Error('No authentication token found');
             }
+
+            // Fetch real progress data from API
+            const response = await axios.get('http://localhost:4000/api/progress/summary', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
 
             if (response.data.success) {
+                const data = response.data.data;
                 setSavingsData({
-                    totalMoneySaved: response.data.data.TotalMoneySaved || 0,
-                    daysTracked: response.data.data.TotalDaysTracked || 0,
-                    cigarettesNotSmoked: response.data.data.CigarettesNotSmoked || 0,
-                    smokeFreePercentage: response.data.data.SmokeFreePercentage || 0,
-                    calculation: response.data.data.calculation,
-                    isDemo: response.data.data.calculation?.isDemo || false
+                    totalMoneySaved: data.TotalMoneySaved || 0,
+                    cigarettesNotSmoked: data.CigarettesNotSmoked || 0,
+                    daysTracked: data.TotalDaysTracked || 0,
+                    calculation: data.calculation || null,
+                    isDemo: false // This is real data from API
                 });
             } else {
-                throw new Error('API returned unsuccessful response');
+                throw new Error(response.data.message || 'Failed to load savings data');
             }
-
         } catch (error) {
             console.error('Error loading savings data:', error);
             setError(error.message);
 
-            // Fallback to realistic demo data
+            // Use fallback data only if API fails
             setSavingsData({
-                totalMoneySaved: 105000, // 7 days × 10 cigarettes × 1500 VNĐ
-                daysTracked: 7,
-                cigarettesNotSmoked: 70,
-                smokeFreePercentage: 100,
-                calculation: {
-                    description: "7 ngày × 10 điếu/ngày × 1,500 VNĐ/điếu (Demo)",
-                    isDemo: true
-                },
-                isDemo: true
+                totalMoneySaved: 0,
+                cigarettesNotSmoked: 0,
+                daysTracked: 0,
+                calculation: null,
+                isDemo: true // Mark as demo/fallback data
             });
         } finally {
             setLoading(false);
@@ -79,7 +67,11 @@ const SavingsDisplay = ({
     };
 
     if (loading) {
-        return <Spin size="small" />;
+        return (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+                <Spin size="small" />
+            </div>
+        );
     }
 
     if (error && !savingsData) {
@@ -97,20 +89,44 @@ const SavingsDisplay = ({
         return value.toLocaleString('vi-VN');
     };
 
+    // Determine what to display based on displayType
+    const getDisplayValue = () => {
+        if (displayType === "cigarettes") {
+            return savingsData.cigarettesNotSmoked;
+        }
+        return savingsData.totalMoneySaved;
+    };
+
+    const getDisplaySuffix = () => {
+        if (displayType === "cigarettes") {
+            return savingsData.daysTracked > 0
+                ? `điều (${savingsData.daysTracked} ngày)`
+                : "điều";
+        }
+        return suffix;
+    };
+
     return (
         <div style={style}>
             <Statistic
                 title={title}
-                value={savingsData.totalMoneySaved}
-                prefix={prefix}
-                suffix={suffix}
-                valueStyle={valueStyle}
+                value={getDisplayValue()}
+                prefix={displayType === "cigarettes" ? <HeartOutlined /> : prefix}
+                suffix={getDisplaySuffix()}
+                valueStyle={displayType === "cigarettes" ? { color: '#cf1322' } : valueStyle}
                 formatter={(value) => formatValue(value)}
             />
 
             {showDetails && savingsData && (
                 <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
-                    <div>{savingsData.cigarettesNotSmoked} điếu không hút</div>
+                    <div>
+                        {savingsData.cigarettesNotSmoked} điều không hút
+                        {savingsData.daysTracked > 0 && (
+                            <span style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                                {' '}(trong {savingsData.daysTracked} ngày theo dõi)
+                            </span>
+                        )}
+                    </div>
                     <div>{savingsData.daysTracked} ngày theo dõi</div>
                     {savingsData.calculation?.description && (
                         <div style={{ marginTop: 4, fontStyle: 'italic' }}>
@@ -119,7 +135,7 @@ const SavingsDisplay = ({
                     )}
                     {savingsData.isDemo && (
                         <div style={{ color: '#faad14', fontWeight: 'bold' }}>
-                            (Dữ liệu demo)
+                            (Dữ liệu demo - API không khả dụng)
                         </div>
                     )}
                 </div>

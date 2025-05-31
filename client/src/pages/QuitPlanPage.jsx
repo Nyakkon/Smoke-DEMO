@@ -672,6 +672,11 @@ const QuitPlanPage = () => {
                             />
                             <Text className="text-sm text-gray-500">
                                 {progressSavings?.cigarettesNotSmoked || 0} điếu không hút
+                                {progressSummary?.TotalDaysTracked > 0 && (
+                                    <span style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                                        {' '}(trong {progressSummary.TotalDaysTracked} ngày)
+                                    </span>
+                                )}
                             </Text>
                         </Card>
                     </Col>

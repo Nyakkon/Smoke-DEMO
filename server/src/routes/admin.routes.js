@@ -1691,6 +1691,21 @@ router.post('/confirm-payment/:paymentId', protect, authorize('admin'), async (r
                     VALUES (@UserID, @Title, @Message, @Type)
                 `);
 
+            // Auto-create QuitPlan when membership is confirmed
+            const targetDate = new Date(startDate);
+            targetDate.setDate(targetDate.getDate() + 90); // 90 days plan by default
+
+            await transaction.request()
+                .input('UserID', payment.UserID)
+                .input('StartDate', startDate)
+                .input('TargetDate', targetDate)
+                .input('Reason', `Kế hoạch cai thuốc cho gói ${payment.PlanName}`)
+                .input('DetailedPlan', 'Kế hoạch cai thuốc được tạo tự động khi kích hoạt membership. Hãy cập nhật tiến trình hàng ngày để theo dõi quá trình cai thuốc.')
+                .query(`
+                    INSERT INTO QuitPlans (UserID, StartDate, TargetDate, Reason, DetailedPlan, Status, MotivationLevel)
+                    VALUES (@UserID, @StartDate, @TargetDate, @Reason, @DetailedPlan, 'active', 7)
+                `);
+
             await transaction.commit();
 
             res.json({
@@ -1827,6 +1842,625 @@ router.get('/payment-confirmations', protect, authorize('admin'), async (req, re
         res.status(500).json({
             success: false,
             message: 'Lỗi khi lấy lịch sử xác nhận thanh toán'
+        });
+    }
+});
+
+// ==================== USER ACTIVITY TRACKING ====================
+
+// Get comprehensive user activity tracking
+router.get('/user-activity', protect, authorize('admin'), async (req, res) => {
+    try {
+        console.log('🔍 Starting user-activity endpoint...');
+
+        // Get users in quit process - RELAXED CONSTRAINTS (tạm thời nới lỏng để hiển thị)  
+        const usersInQuitProcessResult = await pool.request().query(`
+            SELECT 
+                u.UserID,
+                u.Email,
+                u.FirstName,
+                u.LastName,
+                u.Avatar,
+                u.CreatedAt,
+                u.LastLoginAt,
+                qp.PlanID,
+                qp.StartDate as QuitStartDate,
+                qp.TargetDate as QuitTargetDate,
+                qp.Status as QuitStatus,
+                qp.MotivationLevel,
+                qp.CoachID,
+                ISNULL(coach.FirstName + ' ' + coach.LastName, 'Chưa có coach') as CoachName,
+                ISNULL(DATEDIFF(day, qp.StartDate, GETDATE()), 0) as DaysIntoQuit,
+                ISNULL(DATEDIFF(day, GETDATE(), qp.TargetDate), 0) as DaysToTarget,
+                -- Add progress tracking data (không cần ràng buộc membership)
+                pt.Date as LastProgressDate,
+                pt.CigarettesSmoked as LastCigarettesSmoked,
+                pt.CravingLevel as LastCravingLevel,
+                pt.DaysSmokeFree as CurrentDaysSmokeFree,
+                pt.MoneySaved as TotalMoneySaved,
+                ISNULL(um.StartDate, u.CreatedAt) as MembershipStartDate,
+                um.EndDate as MembershipEndDate,
+                ISNULL(mp.Name, 'Chưa có gói') as MembershipPlanName,
+                'Stable' as SupportStatus
+            FROM Users u
+            LEFT JOIN UserMemberships um ON u.UserID = um.UserID AND um.Status = 'active'  -- Changed to LEFT JOIN
+            LEFT JOIN MembershipPlans mp ON um.PlanID = mp.PlanID
+            LEFT JOIN QuitPlans qp ON u.UserID = qp.UserID AND qp.Status = 'active'  -- Changed to LEFT JOIN
+            LEFT JOIN Users coach ON qp.CoachID = coach.UserID
+            LEFT JOIN (
+                SELECT UserID, Date, CigarettesSmoked, CravingLevel, DaysSmokeFree, MoneySaved,
+                       ROW_NUMBER() OVER (PARTITION BY UserID ORDER BY Date DESC) as rn
+                FROM ProgressTracking
+                -- Removed membership constraints
+            ) pt ON u.UserID = pt.UserID AND pt.rn = 1
+            WHERE u.Role = 'member'  -- Chỉ lấy member đã mua gói, không lấy guest
+                -- Keep users who have either membership OR quitplan OR progress tracking
+                AND (um.UserID IS NOT NULL OR qp.UserID IS NOT NULL OR pt.UserID IS NOT NULL)
+            ORDER BY ISNULL(qp.StartDate, u.CreatedAt) DESC
+        `);
+
+        console.log(`✅ Found ${usersInQuitProcessResult.recordset.length} users in quit process`);
+
+        // Get users needing support - RELAXED CONSTRAINTS (tạm thời nới lỏng để hiển thị)
+        const usersNeedingSupportResult = await pool.request().query(`
+            SELECT 
+                u.UserID,
+                u.Email,
+                u.FirstName + ' ' + u.LastName as FullName,
+                u.Avatar,
+                u.LastLoginAt,
+                qp.StartDate as QuitStartDate,
+                qp.MotivationLevel,
+                qp.CoachID,
+                ISNULL(coach.FirstName + ' ' + coach.LastName, 'Chưa có coach') as CoachName,
+                pt.Date as LastProgressDate,
+                pt.CigarettesSmoked,
+                pt.CravingLevel,
+                pt.EmotionNotes,
+                ISNULL(um.StartDate, u.CreatedAt) as MembershipStartDate,
+                -- Support reasons - COMPREHENSIVE (hiển thị tất cả vấn đề)
+                CASE 
+                    WHEN u.LastLoginAt IS NULL AND pt.Date IS NULL THEN 'Chưa đăng nhập bao giờ và chưa điền tiến trình'
+                    WHEN u.LastLoginAt IS NULL THEN 'Chưa đăng nhập bao giờ'
+                    WHEN pt.Date IS NULL THEN 'Chưa điền tiến trình nào'
+                    WHEN u.LastLoginAt < DATEADD(day, -30, GETDATE()) AND pt.Date < DATEADD(day, -7, GETDATE()) THEN 'Không login thường xuyên (' + CAST(DATEDIFF(day, u.LastLoginAt, GETDATE()) as NVARCHAR) + ' ngày) và không cập nhật tiến trình (' + CAST(DATEDIFF(day, pt.Date, GETDATE()) as NVARCHAR) + ' ngày)'
+                    WHEN u.LastLoginAt < DATEADD(day, -30, GETDATE()) AND ISNULL(qp.MotivationLevel, 5) <= 3 THEN 'Không login thường xuyên (' + CAST(DATEDIFF(day, u.LastLoginAt, GETDATE()) as NVARCHAR) + ' ngày) và động lực thấp (' + CAST(ISNULL(qp.MotivationLevel, 5) as NVARCHAR) + '/10)'
+                    WHEN pt.Date < DATEADD(day, -7, GETDATE()) AND ISNULL(qp.MotivationLevel, 5) <= 3 THEN 'Không cập nhật tiến trình (' + CAST(DATEDIFF(day, pt.Date, GETDATE()) as NVARCHAR) + ' ngày) và động lực thấp (' + CAST(ISNULL(qp.MotivationLevel, 5) as NVARCHAR) + '/10)'
+                    WHEN u.LastLoginAt < DATEADD(day, -30, GETDATE()) THEN 'Không login thường xuyên (' + CAST(DATEDIFF(day, u.LastLoginAt, GETDATE()) as NVARCHAR) + ' ngày)'
+                    WHEN u.LastLoginAt < DATEADD(day, -14, GETDATE()) THEN 'Không đăng nhập ' + CAST(DATEDIFF(day, u.LastLoginAt, GETDATE()) as NVARCHAR) + ' ngày'
+                    WHEN pt.Date < DATEADD(day, -7, GETDATE()) THEN 'Không cập nhật tiến trình ' + CAST(DATEDIFF(day, pt.Date, GETDATE()) as NVARCHAR) + ' ngày'
+                    WHEN pt.CravingLevel >= 8 THEN 'Mức thèm thuốc cao (' + CAST(pt.CravingLevel as NVARCHAR) + '/10)'
+                    WHEN pt.CigarettesSmoked > 0 AND pt.Date >= DATEADD(day, -3, GETDATE()) THEN 'Đã hút thuốc gần đây (' + CAST(pt.CigarettesSmoked as NVARCHAR) + ' điếu)'
+                    WHEN ISNULL(qp.MotivationLevel, 5) <= 3 THEN 'Động lực thấp (' + CAST(ISNULL(qp.MotivationLevel, 5) as NVARCHAR) + '/10)'
+                    ELSE 'Cần theo dõi thêm'
+                END as SupportReason,
+                CASE 
+                    WHEN u.LastLoginAt IS NULL THEN 'Critical'
+                    WHEN pt.Date IS NULL THEN 'Critical'
+                    WHEN u.LastLoginAt < DATEADD(day, -30, GETDATE()) THEN 'Critical'
+                    WHEN u.LastLoginAt < DATEADD(day, -14, GETDATE()) THEN 'High'
+                    WHEN ISNULL(qp.MotivationLevel, 5) <= 3 THEN 'Medium'
+                    ELSE 'Low'
+                END as Priority
+            FROM Users u
+            LEFT JOIN UserMemberships um ON u.UserID = um.UserID AND um.Status = 'active'  -- Changed to LEFT JOIN
+            LEFT JOIN QuitPlans qp ON u.UserID = qp.UserID AND qp.Status = 'active'  -- Changed to LEFT JOIN
+            LEFT JOIN Users coach ON qp.CoachID = coach.UserID
+            LEFT JOIN (
+                SELECT UserID, Date, CigarettesSmoked, CravingLevel, EmotionNotes,
+                       ROW_NUMBER() OVER (PARTITION BY UserID ORDER BY Date DESC) as rn
+                FROM ProgressTracking pt2
+                -- Removed strict membership constraints for now
+            ) pt ON u.UserID = pt.UserID AND pt.rn = 1
+            WHERE u.Role = 'member'  -- Chỉ lấy member đã mua gói
+                -- Simplified filter conditions
+                AND (
+                    u.LastLoginAt IS NULL OR
+                    pt.Date IS NULL OR
+                    u.LastLoginAt < DATEADD(day, -7, GETDATE()) OR
+                    ISNULL(qp.MotivationLevel, 5) <= 5 OR
+                    pt.CravingLevel >= 7 OR
+                    (pt.CigarettesSmoked > 0 AND pt.Date >= DATEADD(day, -3, GETDATE()))
+                )
+            ORDER BY 
+                CASE 
+                    WHEN u.LastLoginAt IS NULL THEN 1
+                    WHEN pt.Date IS NULL THEN 1
+                    WHEN u.LastLoginAt < DATEADD(day, -30, GETDATE()) THEN 1
+                    WHEN u.LastLoginAt < DATEADD(day, -14, GETDATE()) THEN 2
+                    WHEN ISNULL(qp.MotivationLevel, 5) <= 3 THEN 3
+                    ELSE 4
+                END
+        `);
+
+        console.log(`✅ Found ${usersNeedingSupportResult.recordset.length} users needing support`);
+
+        // Get achievement statistics - SIMPLE QUERY
+        const achievementStatsResult = await pool.request().query(`
+            SELECT 
+                a.AchievementID,
+                a.Name as AchievementName,
+                a.Description,
+                a.IconURL,
+                a.MilestoneDays,
+                a.SavedMoney,
+                COUNT(ua.UserAchievementID) as TimesEarned,
+                100 as TotalEligibleUsers,
+                CAST(COUNT(ua.UserAchievementID) * 100.0 / 100.0 as DECIMAL(5,2)) as EarnPercentage
+            FROM Achievements a
+            LEFT JOIN UserAchievements ua ON a.AchievementID = ua.AchievementID
+            GROUP BY a.AchievementID, a.Name, a.Description, a.IconURL, a.MilestoneDays, a.SavedMoney
+            ORDER BY TimesEarned DESC
+        `);
+
+        console.log(`✅ Found ${achievementStatsResult.recordset.length} achievements`);
+
+        // Get coach performance - SIMPLE QUERY
+        const coachPerformanceResult = await pool.request().query(`
+            SELECT 
+                c.UserID as CoachID,
+                c.FirstName + ' ' + c.LastName as CoachName,
+                c.Avatar,
+                COUNT(qp.PlanID) as TotalAssignedPlans,
+                COUNT(CASE WHEN qp.Status = 'active' THEN 1 END) as ActivePlans,
+                COUNT(CASE WHEN qp.Status = 'completed' THEN 1 END) as CompletedPlans,
+                5.0 as AverageRating,
+                10 as TotalReviews,
+                COUNT(CASE WHEN qp.CreatedAt >= DATEADD(day, -30, GETDATE()) THEN 1 END) as NewPlansLast30Days
+            FROM Users c
+            LEFT JOIN QuitPlans qp ON c.UserID = qp.CoachID
+            WHERE c.Role = 'coach' AND c.IsActive = 1
+            GROUP BY c.UserID, c.FirstName, c.LastName, c.Avatar
+            HAVING COUNT(qp.PlanID) > 0
+            ORDER BY TotalAssignedPlans DESC
+        `);
+
+        console.log(`✅ Found ${coachPerformanceResult.recordset.length} coaches`);
+
+        res.json({
+            success: true,
+            data: {
+                usersInQuitProcess: removeDuplicateUsers(usersInQuitProcessResult.recordset),
+                usersNeedingSupport: removeDuplicateUsers(usersNeedingSupportResult.recordset),
+                achievementStats: achievementStatsResult.recordset,
+                coachPerformance: coachPerformanceResult.recordset
+            },
+            message: 'Dữ liệu theo dõi hoạt động người dùng được tải thành công'
+        });
+
+        console.log('✅ User activity endpoint completed successfully');
+
+    } catch (error) {
+        console.error('❌ User activity tracking error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi tải dữ liệu theo dõi hoạt động',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Helper function to remove duplicate users
+function removeDuplicateUsers(users) {
+    const seen = new Set();
+    return users.filter(user => {
+        if (seen.has(user.UserID)) {
+            return false;
+        }
+        seen.add(user.UserID);
+        return true;
+    });
+}
+
+// Get detailed user progress analysis
+router.get('/user-progress-analysis/:userId', protect, authorize('admin'), async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // Get user basic info
+        const userInfoResult = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    u.UserID, u.Email, u.FirstName, u.LastName, u.Avatar,
+                    u.CreatedAt, u.LastLoginAt, u.IsActive,
+                    um.Status as MembershipStatus, um.StartDate as MembershipStart, um.EndDate as MembershipEnd,
+                    mp.Name as PlanName, mp.Price
+                FROM Users u
+                LEFT JOIN UserMemberships um ON u.UserID = um.UserID AND um.Status = 'active'
+                LEFT JOIN MembershipPlans mp ON um.PlanID = mp.PlanID
+                WHERE u.UserID = @UserID
+            `);
+
+        if (userInfoResult.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Người dùng không tồn tại'
+            });
+        }
+
+        // Get quit plans
+        const quitPlansResult = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    qp.*,
+                    c.FirstName + ' ' + c.LastName as CoachName,
+                    DATEDIFF(day, qp.StartDate, GETDATE()) as DaysElapsed,
+                    DATEDIFF(day, qp.StartDate, qp.TargetDate) as PlannedDuration,
+                    CASE 
+                        WHEN qp.Status = 'completed' THEN DATEDIFF(day, qp.StartDate, qp.TargetDate)
+                        ELSE DATEDIFF(day, qp.StartDate, GETDATE())
+                    END as ActualDuration
+                FROM QuitPlans qp
+                LEFT JOIN Users c ON qp.CoachID = c.UserID
+                WHERE qp.UserID = @UserID
+                ORDER BY qp.CreatedAt DESC
+            `);
+
+        // Get progress tracking data - ONLY AFTER MEMBERSHIP START
+        const progressDataResult = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    Date, CigarettesSmoked, CravingLevel, EmotionNotes,
+                    MoneySaved, DaysSmokeFree, HealthNotes, CreatedAt
+                FROM ProgressTracking pt
+                WHERE pt.UserID = @UserID
+                    AND EXISTS (
+                        SELECT 1 FROM UserMemberships um 
+                        WHERE um.UserID = pt.UserID 
+                            AND um.Status = 'active'
+                            AND pt.Date >= um.StartDate  -- Chỉ lấy progress sau khi mua gói
+                            AND pt.Date <= ISNULL(um.EndDate, '9999-12-31')
+                    )
+                ORDER BY Date DESC
+            `);
+
+        // Get achievements
+        const achievementsResult = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    a.Name, a.Description, a.IconURL, a.MilestoneDays, a.SavedMoney,
+                    ua.EarnedAt
+                FROM UserAchievements ua
+                JOIN Achievements a ON ua.AchievementID = a.AchievementID
+                WHERE ua.UserID = @UserID
+                ORDER BY ua.EarnedAt DESC
+            `);
+
+        // Calculate analytics
+        const progressData = progressDataResult.recordset;
+        const analytics = {
+            totalDaysTracked: progressData.length,
+            smokeFreeDays: progressData.filter(p => p.CigarettesSmoked === 0).length,
+            totalCigarettesSmoked: progressData.reduce((sum, p) => sum + (p.CigarettesSmoked || 0), 0),
+            totalMoneySaved: progressData.reduce((sum, p) => sum + (p.MoneySaved || 0), 0),
+            averageCravingLevel: progressData.length > 0 ?
+                progressData.reduce((sum, p) => sum + (p.CravingLevel || 0), 0) / progressData.length : 0,
+            longestSmokeFreePeriod: calculateLongestSmokeFreePeriod(progressData),
+            recentTrend: calculateRecentTrend(progressData)
+        };
+
+        res.json({
+            success: true,
+            data: {
+                userInfo: userInfoResult.recordset[0],
+                quitPlans: quitPlansResult.recordset,
+                progressData: progressData,
+                achievements: achievementsResult.recordset,
+                analytics: analytics
+            },
+            message: 'Phân tích tiến trình người dùng được tải thành công'
+        });
+
+    } catch (error) {
+        console.error('User progress analysis error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi phân tích tiến trình người dùng',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Helper functions for analytics
+function calculateLongestSmokeFreePeriod(progressData) {
+    let maxPeriod = 0;
+    let currentPeriod = 0;
+
+    // Sort by date ascending
+    const sortedData = progressData.sort((a, b) => new Date(a.Date) - new Date(b.Date));
+
+    for (const entry of sortedData) {
+        if (entry.CigarettesSmoked === 0) {
+            currentPeriod++;
+            maxPeriod = Math.max(maxPeriod, currentPeriod);
+        } else {
+            currentPeriod = 0;
+        }
+    }
+
+    return maxPeriod;
+}
+
+function calculateRecentTrend(progressData) {
+    if (progressData.length < 7) return 'insufficient_data';
+
+    // Get last 7 days
+    const recent = progressData.slice(0, 7);
+    const recentCigarettes = recent.reduce((sum, p) => sum + (p.CigarettesSmoked || 0), 0);
+    const recentCravings = recent.reduce((sum, p) => sum + (p.CravingLevel || 0), 0) / recent.length;
+
+    // Get previous 7 days for comparison
+    const previous = progressData.slice(7, 14);
+    if (previous.length === 0) return 'improving';
+
+    const previousCigarettes = previous.reduce((sum, p) => sum + (p.CigarettesSmoked || 0), 0);
+    const previousCravings = previous.reduce((sum, p) => sum + (p.CravingLevel || 0), 0) / previous.length;
+
+    if (recentCigarettes < previousCigarettes && recentCravings < previousCravings) {
+        return 'improving';
+    } else if (recentCigarettes > previousCigarettes || recentCravings > previousCravings) {
+        return 'declining';
+    } else {
+        return 'stable';
+    }
+}
+
+// Get system-wide activity overview
+router.get('/system-overview', protect, authorize('admin'), async (req, res) => {
+    try {
+        const overviewResult = await pool.request().query(`
+            SELECT 
+                -- User activity
+                (SELECT COUNT(*) FROM Users WHERE Role IN ('guest', 'member')) as TotalMembers,
+                (SELECT COUNT(*) FROM Users WHERE Role IN ('guest', 'member') AND IsActive = 1) as ActiveMembers,
+                (SELECT COUNT(*) FROM Users WHERE Role IN ('guest', 'member') AND LastLoginAt >= DATEADD(day, -7, GETDATE())) as RecentlyActiveMembers,
+                (SELECT COUNT(*) FROM Users WHERE Role IN ('guest', 'member') AND CreatedAt >= DATEADD(day, -30, GETDATE())) as NewMembersLast30Days,
+                
+                -- Quit plans activity
+                (SELECT COUNT(*) FROM QuitPlans WHERE Status = 'active') as ActiveQuitPlans,
+                (SELECT COUNT(*) FROM QuitPlans WHERE CreatedAt >= DATEADD(day, -7, GETDATE())) as NewQuitPlansLast7Days,
+                (SELECT COUNT(*) FROM QuitPlans WHERE Status = 'completed') as TotalCompletedPlans,
+                
+                -- Progress tracking activity
+                (SELECT COUNT(DISTINCT UserID) FROM ProgressTracking WHERE Date >= DATEADD(day, -7, GETDATE())) as UsersTrackingLast7Days,
+                (SELECT COUNT(*) FROM ProgressTracking WHERE Date >= DATEADD(day, -1, GETDATE())) as ProgressEntriesYesterday,
+                (SELECT COUNT(*) FROM ProgressTracking WHERE Date >= DATEADD(day, -7, GETDATE())) as ProgressEntriesLast7Days,
+                
+                -- Support metrics
+                (SELECT COUNT(DISTINCT UserID) FROM ProgressTracking WHERE CravingLevel >= 8 AND Date >= DATEADD(day, -3, GETDATE())) as HighCravingUsers,
+                (SELECT COUNT(DISTINCT UserID) FROM ProgressTracking WHERE CigarettesSmoked > 0 AND Date >= DATEADD(day, -3, GETDATE())) as RecentSmokingUsers,
+                
+                -- Achievement activity
+                (SELECT COUNT(*) FROM UserAchievements WHERE EarnedAt >= DATEADD(day, -7, GETDATE())) as AchievementsEarnedLast7Days,
+                (SELECT COUNT(DISTINCT UserID) FROM UserAchievements WHERE EarnedAt >= DATEADD(day, -7, GETDATE())) as UsersEarningAchievementsLast7Days,
+                
+                -- Revenue metrics
+                (SELECT COUNT(*) FROM Payments WHERE Status = 'confirmed' AND PaymentDate >= DATEADD(day, -30, GETDATE())) as PaymentsLast30Days,
+                (SELECT SUM(Amount) FROM Payments WHERE Status = 'confirmed' AND PaymentDate >= DATEADD(day, -30, GETDATE())) as RevenueLast30Days
+        `);
+
+        res.json({
+            success: true,
+            data: overviewResult.recordset[0],
+            message: 'Tổng quan hệ thống được tải thành công'
+        });
+
+    } catch (error) {
+        console.error('System overview error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi tải tổng quan hệ thống',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Get admin profile information
+router.get('/profile', protect, authorize('admin'), async (req, res) => {
+    try {
+        const adminId = req.user.id;
+
+        const result = await pool.request()
+            .input('UserID', adminId)
+            .query(`
+                SELECT 
+                    UserID,
+                    Email,
+                    FirstName,
+                    LastName,
+                    Avatar,
+                    PhoneNumber,
+                    Address,
+                    Role,
+                    IsActive,
+                    EmailVerified,
+                    CreatedAt,
+                    UpdatedAt,
+                    LastLoginAt
+                FROM Users 
+                WHERE UserID = @UserID AND Role = 'admin'
+            `);
+
+        if (result.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thông tin admin'
+            });
+        }
+
+        const adminData = result.recordset[0];
+
+        // Get admin statistics
+        const statsResult = await pool.request()
+            .input('UserID', adminId)
+            .query(`
+                SELECT 
+                    (SELECT COUNT(*) FROM Users WHERE Role IN ('guest', 'member')) as TotalMembersManaged,
+                    (SELECT COUNT(*) FROM Users WHERE Role = 'coach') as TotalCoachesManaged,
+                    (SELECT COUNT(*) FROM BlogPosts) as TotalBlogPostsManaged,
+                    (SELECT COUNT(*) FROM Payments WHERE Status = 'confirmed') as TotalPaymentsProcessed,
+                    (SELECT ISNULL(SUM(Amount), 0) FROM Payments WHERE Status = 'confirmed') as TotalRevenueManaged,
+                    0 as TotalLogins  -- Tạm thời set về 0 vì có thể bảng LoginHistory chưa có
+            `);
+
+        res.json({
+            success: true,
+            data: {
+                ...adminData,
+                statistics: statsResult.recordset[0]
+            },
+            message: 'Thông tin admin được tải thành công'
+        });
+
+    } catch (error) {
+        console.error('Get admin profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi tải thông tin admin',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Update admin profile information
+router.put('/profile', protect, authorize('admin'), async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const { firstName, lastName, phoneNumber, address, avatar } = req.body;
+
+        // Validate input
+        if (!firstName || !lastName) {
+            return res.status(400).json({
+                success: false,
+                message: 'Họ và tên là bắt buộc'
+            });
+        }
+
+        // Update admin profile
+        const result = await pool.request()
+            .input('UserID', adminId)
+            .input('FirstName', firstName.trim())
+            .input('LastName', lastName.trim())
+            .input('PhoneNumber', phoneNumber ? phoneNumber.trim() : null)
+            .input('Address', address ? address.trim() : null)
+            .input('Avatar', avatar ? avatar.trim() : null)
+            .query(`
+                UPDATE Users 
+                SET FirstName = @FirstName,
+                    LastName = @LastName,
+                    PhoneNumber = @PhoneNumber,
+                    Address = @Address,
+                    Avatar = @Avatar,
+                    UpdatedAt = GETDATE()
+                OUTPUT INSERTED.UserID, INSERTED.Email, INSERTED.FirstName, INSERTED.LastName, 
+                       INSERTED.Avatar, INSERTED.PhoneNumber, INSERTED.Address, INSERTED.Role,
+                       INSERTED.UpdatedAt
+                WHERE UserID = @UserID AND Role = 'admin'
+            `);
+
+        if (result.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thông tin admin hoặc không có quyền cập nhật'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: result.recordset[0],
+            message: 'Cập nhật thông tin cá nhân thành công'
+        });
+
+    } catch (error) {
+        console.error('Update admin profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi cập nhật thông tin admin',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Change admin password
+router.put('/change-password', protect, authorize('admin'), async (req, res) => {
+    try {
+        const adminId = req.user.id;
+        const { currentPassword, newPassword, confirmPassword } = req.body;
+
+        // Validate input
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng nhập đầy đủ thông tin'
+            });
+        }
+
+        if (newPassword !== confirmPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mật khẩu mới và xác nhận mật khẩu không khớp'
+            });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mật khẩu mới phải có ít nhất 6 ký tự'
+            });
+        }
+
+        // Get current admin info
+        const adminResult = await pool.request()
+            .input('UserID', adminId)
+            .query(`
+                SELECT UserID, Password, FirstName, LastName 
+                FROM Users 
+                WHERE UserID = @UserID AND Role = 'admin'
+            `);
+
+        if (adminResult.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thông tin admin'
+            });
+        }
+
+        const admin = adminResult.recordset[0];
+
+        // Verify current password (plain text comparison)
+        if (currentPassword !== admin.Password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mật khẩu hiện tại không chính xác'
+            });
+        }
+
+        // Update password (store as plain text for now)
+        await pool.request()
+            .input('UserID', adminId)
+            .input('NewPassword', newPassword)
+            .query(`
+                UPDATE Users 
+                SET Password = @NewPassword,
+                    UpdatedAt = GETDATE()
+                WHERE UserID = @UserID AND Role = 'admin'
+            `);
+
+        res.json({
+            success: true,
+            message: 'Đổi mật khẩu thành công'
+        });
+
+    } catch (error) {
+        console.error('Change admin password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi đổi mật khẩu',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 });

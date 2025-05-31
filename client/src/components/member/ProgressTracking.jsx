@@ -142,44 +142,24 @@ const ProgressTracking = () => {
 
             // Only show warning if it's a specific permission error
             if (error.response?.status === 403) {
-                message.warning('Bạn cần có gói dịch vụ được xác nhận để xem tiến trình chi tiết. Hiển thị dữ liệu demo...');
+                message.warning('Bạn cần có gói dịch vụ được xác nhận để xem tiến trình chi tiết. Hiển thị dữ liệu trống...');
             } else {
-                message.warning('Không thể kết nối server. Hiển thị dữ liệu demo...');
+                message.warning('Không thể kết nối server. Dữ liệu sẽ hiển thị 0 cho đến khi bạn ghi nhận tiến trình đầu tiên...');
             }
 
-            // Use mock data when server is not available or access denied
-            const mockData = [
-                {
-                    Date: new Date().toISOString(),
-                    CigarettesSmoked: 0,
-                    CravingLevel: 3,
-                    EmotionNotes: 'Hôm nay cảm thấy khá tốt, không thèm thuốc nhiều',
-                    MoneySaved: 100000,
-                    DaysSmokeFree: 1,
-                    CreatedAt: new Date().toISOString()
-                },
-                {
-                    Date: new Date(Date.now() - 86400000).toISOString(), // Yesterday
-                    CigarettesSmoked: 2,
-                    CravingLevel: 6,
-                    EmotionNotes: 'Hôm qua còn khó khăn, hút 2 điếu',
-                    MoneySaved: 80000,
-                    DaysSmokeFree: 0,
-                    CreatedAt: new Date(Date.now() - 86400000).toISOString()
-                }
-            ];
-            setProgressData(mockData);
+            // Show empty/zero data instead of demo data when no real progress exists
+            setProgressData([]);
 
-            // Set mock smoking status
+            // Set empty smoking status - no fake demo data
             setSmokingStatus({
-                totalDaysTracked: 2,
-                smokeFreeDays: 1,
-                totalMoneySaved: 180000,
-                averageCravingLevel: 4.5,
-                currentStreak: 1,
-                longestStreak: 1,
-                cigarettesNotSmoked: 18,
-                smokeFreePercentage: 50
+                totalDaysTracked: 0,
+                smokeFreeDays: 0,
+                totalMoneySaved: 0,
+                averageCravingLevel: 0,
+                currentStreak: 0,
+                longestStreak: 0,
+                cigarettesNotSmoked: 0,
+                smokeFreePercentage: 0
             });
         } finally {
             setLoading(false);
@@ -201,31 +181,8 @@ const ProgressTracking = () => {
             }
         } catch (error) {
             console.error('Error loading achievements:', error);
-            // Use mock achievements as fallback
-            const mockAchievements = [
-                {
-                    AchievementID: 1,
-                    Name: 'Tiết kiệm 500K',
-                    Description: 'Tuyệt vời! Bạn đã tiết kiệm được 500,000 VNĐ!',
-                    IconURL: '💸',
-                    EarnedAt: '2025-05-28T07:58:06.477Z'
-                },
-                {
-                    AchievementID: 2,
-                    Name: 'Tiết kiệm 1 triệu',
-                    Description: 'Thành tích đáng kinh ngạc! 1,000,000 VNĐ đã được tiết kiệm!',
-                    IconURL: '🏦',
-                    EarnedAt: '2025-05-28T07:58:06.480Z'
-                },
-                {
-                    AchievementID: 3,
-                    Name: 'Tiết kiệm 100K',
-                    Description: 'Bạn đã tiết kiệm được 100,000 VNĐ nhờ việc không hút thuốc!',
-                    IconURL: '💰',
-                    EarnedAt: '2025-05-28T07:58:06.480Z'
-                }
-            ];
-            setAchievements(mockAchievements);
+            // Show empty achievements instead of mock data
+            setAchievements([]);
         }
     };
 
@@ -555,16 +512,24 @@ const ProgressTracking = () => {
     return (
         <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
             <Row gutter={[24, 24]}>
-                {/* Demo Notice */}
-                {progressData.length > 0 && progressData[0].Date === new Date().toISOString().split('T')[0] && (
+                {/* No Data Notice */}
+                {(!progressData || progressData.length === 0) && (
                     <Col span={24}>
                         <Alert
-                            message="Chế độ Demo"
-                            description="Server chưa khởi động. Dữ liệu hiển thị là dữ liệu mẫu để demo chức năng."
+                            message="Chưa có dữ liệu tiến trình"
+                            description="Bạn chưa ghi nhận tiến trình cai thuốc nào. Hãy bắt đầu bằng cách thêm dữ liệu hôm nay!"
                             type="info"
                             showIcon
-                            closable
                             style={{ marginBottom: '16px' }}
+                            action={
+                                <Button
+                                    size="small"
+                                    type="primary"
+                                    onClick={() => setIsAddModalVisible(true)}
+                                >
+                                    Thêm ngay
+                                </Button>
+                            }
                         />
                     </Col>
                 )}
@@ -592,46 +557,70 @@ const ProgressTracking = () => {
                 </Col>
 
                 {/* Statistics Cards */}
-                <Col xs={24} sm={12} lg={6}>
-                    <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
+                <Col xs={24} sm={12} md={6}>
+                    <Card className="text-center">
+                        <HeartOutlined className="text-2xl text-red-500 mb-2" />
                         <Statistic
-                            title="Tổng số ngày theo dõi"
+                            title="Điếu thuốc tránh được"
+                            value={stats.cigarettesNotSmoked}
+                            valueStyle={{ color: '#cf1322' }}
+                        />
+                        <Text className="text-sm text-gray-500">
+                            {stats.totalDays > 0 && (
+                                <span>Trong {stats.totalDays} ngày theo dõi</span>
+                            )}
+                            {stats.totalDays === 0 && (
+                                <span>Chưa có dữ liệu theo dõi</span>
+                            )}
+                        </Text>
+                    </Card>
+                </Col>
+
+                <Col xs={24} sm={12} md={6}>
+                    <Card className="text-center">
+                        <CalendarOutlined className="text-2xl text-blue-500 mb-2" />
+                        <Statistic
+                            title="Tổng ngày theo dõi"
                             value={stats.totalDays}
-                            prefix={<CalendarOutlined />}
                             valueStyle={{ color: '#1890ff' }}
                         />
+                        <Text className="text-sm text-gray-500">
+                            Ngày smoke-free: {stats.smokFreeDays}
+                        </Text>
                     </Card>
                 </Col>
-                <Col xs={24} sm={12} lg={6}>
-                    <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
-                        <Statistic
-                            title="Ngày không hút thuốc"
-                            value={stats.smokFreeDays}
-                            prefix={<CheckCircleOutlined />}
-                            valueStyle={{ color: '#52c41a' }}
-                        />
-                    </Card>
-                </Col>
-                <Col xs={24} sm={12} lg={6}>
+
+                <Col xs={24} sm={12} md={6}>
                     <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
                         <Statistic
                             title="Tiền tiết kiệm"
                             value={stats.totalMoneySaved}
                             prefix={<DollarOutlined />}
                             valueStyle={{ color: '#52c41a' }}
-                            formatter={(value) => `${value.toLocaleString('vi-VN')} ₫`}
+                            suffix="₫"
                         />
+                        <Text className="text-sm text-gray-500">
+                            {stats.totalDays > 0 && (
+                                <span>Trung bình {Math.round(stats.totalMoneySaved / stats.totalDays).toLocaleString()} ₫/ngày</span>
+                            )}
+                        </Text>
                     </Card>
                 </Col>
-                <Col xs={24} sm={12} lg={6}>
+
+                <Col xs={24} sm={12} md={6}>
                     <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
                         <Statistic
-                            title="Chuỗi không hút hiện tại"
-                            value={stats.currentStreak}
-                            suffix="ngày"
-                            prefix={<TrophyOutlined />}
-                            valueStyle={{ color: '#722ed1' }}
+                            title="Mức thèm trung bình"
+                            value={stats.averageCraving}
+                            suffix="/10"
+                            valueStyle={{
+                                color: stats.averageCraving <= 3 ? '#52c41a' :
+                                    stats.averageCraving <= 6 ? '#faad14' : '#ff4d4f'
+                            }}
                         />
+                        <Text className="text-sm text-gray-500">
+                            Chuỗi hiện tại: {stats.currentStreak} ngày
+                        </Text>
                     </Card>
                 </Col>
 

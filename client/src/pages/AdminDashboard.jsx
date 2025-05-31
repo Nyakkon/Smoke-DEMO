@@ -68,6 +68,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import CommunityModeration from './CommunityModeration';
+import UserActivityTracking from './UserActivityTracking';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -89,11 +90,26 @@ const AdminDashboard = () => {
         topRatedCoaches: []
     });
     const [adminProfile, setAdminProfile] = useState(null);
+
+    // Profile management states
+    const [detailedProfile, setDetailedProfile] = useState(null);
+    const [editProfileModalVisible, setEditProfileModalVisible] = useState(false);
+    const [changePasswordModalVisible, setChangePasswordModalVisible] = useState(false);
+    const [profileLoading, setProfileLoading] = useState(false);
+    const [editProfileForm] = Form.useForm();
+    const [changePasswordForm] = Form.useForm();
+
     const navigate = useNavigate();
 
     useEffect(() => {
         checkAuthAndLoadData();
     }, []);
+
+    useEffect(() => {
+        if (selectedTab === 'profile' && !detailedProfile) {
+            loadAdminProfile();
+        }
+    }, [selectedTab]);
 
     const checkAuthAndLoadData = async () => {
         try {
@@ -165,6 +181,126 @@ const AdminDashboard = () => {
         }
     };
 
+    // Profile management functions
+    const loadAdminProfile = async () => {
+        try {
+            setProfileLoading(true);
+            const token = localStorage.getItem('adminToken');
+
+            if (!token) {
+                message.error('Không tìm thấy token xác thực');
+                return;
+            }
+
+            const response = await axios.get('http://localhost:4000/api/admin/profile', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                withCredentials: true
+            });
+
+            if (response.data.success) {
+                setDetailedProfile(response.data.data);
+                console.log('✅ Profile loaded successfully:', response.data.data);
+            } else {
+                message.error('Không thể tải thông tin admin: ' + response.data.message);
+                console.error('❌ Profile API failed:', response.data);
+            }
+
+        } catch (error) {
+            console.error('❌ Error loading admin profile:', error);
+
+            if (error.response?.status === 401) {
+                message.error('Phiên đăng nhập đã hết hạn');
+                // Optionally redirect to login
+            } else if (error.response?.status === 500) {
+                message.error('Lỗi server khi tải thông tin admin');
+                console.error('Server error details:', error.response.data);
+            } else {
+                message.error('Lỗi khi tải thông tin admin: ' + (error.message || 'Unknown error'));
+            }
+        } finally {
+            setProfileLoading(false);
+        }
+    };
+
+    const handleEditProfile = () => {
+        if (detailedProfile) {
+            editProfileForm.setFieldsValue({
+                firstName: detailedProfile.FirstName,
+                lastName: detailedProfile.LastName,
+                phoneNumber: detailedProfile.PhoneNumber,
+                address: detailedProfile.Address,
+                avatar: detailedProfile.Avatar
+            });
+            setEditProfileModalVisible(true);
+        }
+    };
+
+    const handleUpdateProfile = async (values) => {
+        try {
+            const token = localStorage.getItem('adminToken');
+            const response = await axios.put('http://localhost:4000/api/admin/profile', values, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                withCredentials: true
+            });
+
+            if (response.data.success) {
+                message.success('Cập nhật thông tin thành công');
+                setEditProfileModalVisible(false);
+                editProfileForm.resetFields();
+
+                // Update local storage
+                const updatedUser = {
+                    ...adminProfile,
+                    firstName: values.firstName,
+                    lastName: values.lastName
+                };
+                setAdminProfile(updatedUser);
+                localStorage.setItem('adminUser', JSON.stringify(updatedUser));
+
+                // Reload profile data
+                await loadAdminProfile();
+            }
+        } catch (error) {
+            console.error('Update profile error:', error);
+            message.error(error.response?.data?.message || 'Lỗi khi cập nhật thông tin');
+        }
+    };
+
+    const handleChangePassword = async (values) => {
+        try {
+            const token = localStorage.getItem('adminToken');
+            const response = await axios.put('http://localhost:4000/api/admin/change-password', values, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                withCredentials: true
+            });
+
+            if (response.data.success) {
+                message.success('Đổi mật khẩu thành công');
+                setChangePasswordModalVisible(false);
+                changePasswordForm.resetFields();
+            }
+        } catch (error) {
+            console.error('Change password error:', error);
+            message.error(error.response?.data?.message || 'Lỗi khi đổi mật khẩu');
+        }
+    };
+
+    const handleCancelEditProfile = () => {
+        setEditProfileModalVisible(false);
+        editProfileForm.resetFields();
+    };
+
+    const handleCancelChangePassword = () => {
+        setChangePasswordModalVisible(false);
+        changePasswordForm.resetFields();
+    };
+
     const userMenuItems = [
         {
             key: 'home',
@@ -176,6 +312,7 @@ const AdminDashboard = () => {
             key: 'profile',
             icon: <UserOutlined />,
             label: 'Thông tin cá nhân',
+            onClick: () => setSelectedTab('profile'),
         },
         {
             type: 'divider',
@@ -194,6 +331,11 @@ const AdminDashboard = () => {
             key: 'dashboard',
             icon: <DashboardOutlined />,
             label: 'Tổng quan',
+        },
+        {
+            key: 'user-activity',
+            icon: <BarChartOutlined />,
+            label: 'Theo dõi hoạt động',
         },
         {
             key: 'plans',
@@ -489,6 +631,233 @@ const AdminDashboard = () => {
                         </Row>
                     </>
                 );
+            case 'profile':
+                return (
+                    <Spin spinning={profileLoading}>
+                        {detailedProfile ? (
+                            <Row gutter={[24, 24]}>
+                                {/* Profile Header */}
+                                <Col span={24}>
+                                    <Card className="shadow-md">
+                                        <div className="flex items-center mb-6">
+                                            <Avatar
+                                                size={120}
+                                                src={detailedProfile.Avatar}
+                                                icon={<UserOutlined />}
+                                                className="mr-6"
+                                                style={{ border: '4px solid #1890ff' }}
+                                            />
+                                            <div className="flex-1">
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <Title level={2} className="mb-2">
+                                                            {detailedProfile.FirstName} {detailedProfile.LastName}
+                                                        </Title>
+                                                        <Text className="text-lg text-gray-600">
+                                                            Quản trị viên hệ thống
+                                                        </Text>
+                                                        <div className="mt-2">
+                                                            <Tag color="red" icon={<SafetyOutlined />}>
+                                                                Admin
+                                                            </Tag>
+                                                            {detailedProfile.IsActive && (
+                                                                <Tag color="green" icon={<CheckCircleOutlined />}>
+                                                                    Đang hoạt động
+                                                                </Tag>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <Space>
+                                                        <Button
+                                                            type="primary"
+                                                            icon={<EditOutlined />}
+                                                            onClick={handleEditProfile}
+                                                        >
+                                                            Chỉnh sửa thông tin
+                                                        </Button>
+                                                        <Button
+                                                            icon={<SettingOutlined />}
+                                                            onClick={() => setChangePasswordModalVisible(true)}
+                                                        >
+                                                            Đổi mật khẩu
+                                                        </Button>
+                                                    </Space>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Admin Statistics */}
+                                        {detailedProfile.statistics && (
+                                            <Row gutter={[16, 16]} className="mb-6">
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Thành viên quản lý"
+                                                        value={detailedProfile.statistics.TotalMembersManaged}
+                                                        prefix={<TeamOutlined />}
+                                                    />
+                                                </Col>
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Coaches quản lý"
+                                                        value={detailedProfile.statistics.TotalCoachesManaged}
+                                                        prefix={<UsergroupAddOutlined />}
+                                                    />
+                                                </Col>
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Bài viết quản lý"
+                                                        value={detailedProfile.statistics.TotalBlogPostsManaged}
+                                                        prefix={<FileTextOutlined />}
+                                                    />
+                                                </Col>
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Thanh toán xử lý"
+                                                        value={detailedProfile.statistics.TotalPaymentsProcessed}
+                                                        prefix={<CreditCardOutlined />}
+                                                    />
+                                                </Col>
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Doanh thu quản lý"
+                                                        value={detailedProfile.statistics.TotalRevenueManaged || 0}
+                                                        formatter={(value) => `${value?.toLocaleString() || 0}$`}
+                                                        prefix={<DollarOutlined />}
+                                                    />
+                                                </Col>
+                                                <Col xs={12} sm={8} lg={4}>
+                                                    <Statistic
+                                                        title="Tổng đăng nhập"
+                                                        value={detailedProfile.statistics.TotalLogins}
+                                                        prefix={<ClockCircleOutlined />}
+                                                    />
+                                                </Col>
+                                            </Row>
+                                        )}
+                                    </Card>
+                                </Col>
+
+                                {/* Basic Information */}
+                                <Col xs={24} lg={12}>
+                                    <Card
+                                        title={
+                                            <div className="flex items-center">
+                                                <UserOutlined className="mr-2" />
+                                                <span>Thông tin cơ bản</span>
+                                            </div>
+                                        }
+                                        className="shadow-md h-full"
+                                    >
+                                        <Descriptions column={1} size="small">
+                                            <Descriptions.Item
+                                                label={<span><MailOutlined className="mr-2" />Email</span>}
+                                            >
+                                                {detailedProfile.Email}
+                                            </Descriptions.Item>
+                                            <Descriptions.Item
+                                                label={<span><PhoneOutlined className="mr-2" />Số điện thoại</span>}
+                                            >
+                                                {detailedProfile.PhoneNumber || 'Chưa cập nhật'}
+                                            </Descriptions.Item>
+                                            <Descriptions.Item
+                                                label={<span><EnvironmentOutlined className="mr-2" />Địa chỉ</span>}
+                                            >
+                                                {detailedProfile.Address || 'Chưa cập nhật'}
+                                            </Descriptions.Item>
+                                            <Descriptions.Item
+                                                label={<span><SafetyOutlined className="mr-2" />Vai trò</span>}
+                                            >
+                                                <Tag color="red">{detailedProfile.Role.toUpperCase()}</Tag>
+                                            </Descriptions.Item>
+                                            <Descriptions.Item
+                                                label={<span><CalendarOutlined className="mr-2" />Ngày tạo tài khoản</span>}
+                                            >
+                                                {new Date(detailedProfile.CreatedAt).toLocaleDateString('vi-VN')}
+                                            </Descriptions.Item>
+                                            <Descriptions.Item
+                                                label={<span><ClockCircleOutlined className="mr-2" />Lần đăng nhập cuối</span>}
+                                            >
+                                                {detailedProfile.LastLoginAt ?
+                                                    new Date(detailedProfile.LastLoginAt).toLocaleString('vi-VN') :
+                                                    'Chưa có thông tin'
+                                                }
+                                            </Descriptions.Item>
+                                        </Descriptions>
+                                    </Card>
+                                </Col>
+
+                                {/* Account Security */}
+                                <Col xs={24} lg={12}>
+                                    <Card
+                                        title={
+                                            <div className="flex items-center">
+                                                <SafetyOutlined className="mr-2" />
+                                                <span>Bảo mật tài khoản</span>
+                                            </div>
+                                        }
+                                        className="shadow-md h-full"
+                                    >
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                                <div>
+                                                    <Text strong>Trạng thái tài khoản</Text>
+                                                    <br />
+                                                    <Text type="secondary">Tài khoản admin đang hoạt động</Text>
+                                                </div>
+                                                <Tag color={detailedProfile.IsActive ? 'green' : 'red'}>
+                                                    {detailedProfile.IsActive ? 'Hoạt động' : 'Tạm khóa'}
+                                                </Tag>
+                                            </div>
+
+                                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                                <div>
+                                                    <Text strong>Xác thực email</Text>
+                                                    <br />
+                                                    <Text type="secondary">Trạng thái xác thực email</Text>
+                                                </div>
+                                                <Tag color={detailedProfile.EmailVerified ? 'green' : 'orange'}>
+                                                    {detailedProfile.EmailVerified ? 'Đã xác thực' : 'Chưa xác thực'}
+                                                </Tag>
+                                            </div>
+
+                                            <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                                <div>
+                                                    <Text strong>Mật khẩu</Text>
+                                                    <br />
+                                                    <Text type="secondary">Đổi mật khẩu để bảo mật tài khoản</Text>
+                                                </div>
+                                                <Button
+                                                    icon={<SettingOutlined />}
+                                                    onClick={() => setChangePasswordModalVisible(true)}
+                                                >
+                                                    Đổi mật khẩu
+                                                </Button>
+                                            </div>
+
+                                            {detailedProfile.UpdatedAt && (
+                                                <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
+                                                    <div>
+                                                        <Text strong>Cập nhật cuối</Text>
+                                                        <br />
+                                                        <Text type="secondary">
+                                                            {new Date(detailedProfile.UpdatedAt).toLocaleString('vi-VN')}
+                                                        </Text>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </Card>
+                                </Col>
+                            </Row>
+                        ) : (
+                            <div className="text-center py-8">
+                                <Text>Đang tải thông tin cá nhân...</Text>
+                            </div>
+                        )}
+                    </Spin>
+                );
+            case 'user-activity':
+                return <UserActivityTracking />;
             case 'plans':
                 return <PlansManagement />;
             case 'coaches':
@@ -2815,6 +3184,154 @@ const AdminDashboard = () => {
                     {renderContent()}
                 </Content>
             </Layout>
+
+            {/* Edit Profile Modal */}
+            <Modal
+                title={
+                    <div className="flex items-center">
+                        <EditOutlined className="mr-2" />
+                        <span>Chỉnh sửa thông tin cá nhân</span>
+                    </div>
+                }
+                open={editProfileModalVisible}
+                onCancel={handleCancelEditProfile}
+                footer={null}
+                width={600}
+                style={{ top: 20 }}
+            >
+                <Form
+                    form={editProfileForm}
+                    layout="vertical"
+                    onFinish={handleUpdateProfile}
+                    className="mt-4"
+                >
+                    <Row gutter={[16, 16]}>
+                        <Col xs={24} sm={12}>
+                            <Form.Item
+                                label="Họ"
+                                name="firstName"
+                                rules={[{ required: true, message: 'Vui lòng nhập họ' }]}
+                            >
+                                <Input placeholder="Nhập họ" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={12}>
+                            <Form.Item
+                                label="Tên"
+                                name="lastName"
+                                rules={[{ required: true, message: 'Vui lòng nhập tên' }]}
+                            >
+                                <Input placeholder="Nhập tên" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24}>
+                            <Form.Item
+                                label="Số điện thoại"
+                                name="phoneNumber"
+                            >
+                                <Input placeholder="Nhập số điện thoại" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24}>
+                            <Form.Item
+                                label="Địa chỉ"
+                                name="address"
+                            >
+                                <Input.TextArea
+                                    rows={3}
+                                    placeholder="Nhập địa chỉ"
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24}>
+                            <Form.Item
+                                label="Avatar URL"
+                                name="avatar"
+                            >
+                                <Input placeholder="Nhập URL avatar" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+
+                    <div className="flex justify-end space-x-2 mt-6">
+                        <Button onClick={handleCancelEditProfile}>
+                            Hủy
+                        </Button>
+                        <Button type="primary" htmlType="submit">
+                            Cập nhật
+                        </Button>
+                    </div>
+                </Form>
+            </Modal>
+
+            {/* Change Password Modal */}
+            <Modal
+                title={
+                    <div className="flex items-center">
+                        <SettingOutlined className="mr-2" />
+                        <span>Đổi mật khẩu</span>
+                    </div>
+                }
+                open={changePasswordModalVisible}
+                onCancel={handleCancelChangePassword}
+                footer={null}
+                width={500}
+                style={{ top: 20 }}
+            >
+                <Form
+                    form={changePasswordForm}
+                    layout="vertical"
+                    onFinish={handleChangePassword}
+                    className="mt-4"
+                >
+                    <Form.Item
+                        label="Mật khẩu hiện tại"
+                        name="currentPassword"
+                        rules={[{ required: true, message: 'Vui lòng nhập mật khẩu hiện tại' }]}
+                    >
+                        <Input.Password placeholder="Nhập mật khẩu hiện tại" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="Mật khẩu mới"
+                        name="newPassword"
+                        rules={[
+                            { required: true, message: 'Vui lòng nhập mật khẩu mới' },
+                            { min: 6, message: 'Mật khẩu phải có ít nhất 6 ký tự' }
+                        ]}
+                    >
+                        <Input.Password placeholder="Nhập mật khẩu mới" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="Xác nhận mật khẩu mới"
+                        name="confirmPassword"
+                        dependencies={['newPassword']}
+                        rules={[
+                            { required: true, message: 'Vui lòng xác nhận mật khẩu mới' },
+                            ({ getFieldValue }) => ({
+                                validator(_, value) {
+                                    if (!value || getFieldValue('newPassword') === value) {
+                                        return Promise.resolve();
+                                    }
+                                    return Promise.reject(new Error('Mật khẩu xác nhận không khớp!'));
+                                },
+                            }),
+                        ]}
+                    >
+                        <Input.Password placeholder="Xác nhận mật khẩu mới" />
+                    </Form.Item>
+
+                    <div className="flex justify-end space-x-2 mt-6">
+                        <Button onClick={handleCancelChangePassword}>
+                            Hủy
+                        </Button>
+                        <Button type="primary" htmlType="submit">
+                            Đổi mật khẩu
+                        </Button>
+                    </div>
+                </Form>
+            </Modal>
         </Layout>
     );
 };
