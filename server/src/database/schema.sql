@@ -43,7 +43,9 @@ VALUES
 ('coach@example.com', 'H12345678@', 'Coach', 'Smith', 'coach', 'coach.jpg', '0111222333', '789 Coach Blvd',
  1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_coach', DATEADD(DAY, 7, GETDATE())),
 ('admin@example.com', 'H12345678@', 'Admin', 'Root', 'admin', 'admin.png', '0999888777', '321 Admin Ave',
- 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_admin', DATEADD(DAY, 30, GETDATE()));
+ 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_admin', DATEADD(DAY, 30, GETDATE())),
+('coach2@example.com', 'H12345678@', 'Dr. Minh', 'Nguyen', 'coach', 'coach2.jpg', '0333444555', '456 Wellness Center',
+ 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_coach2', DATEADD(DAY, 7, GETDATE()));
 
 -- Login History
 CREATE TABLE LoginHistory (
@@ -415,8 +417,8 @@ DECLARE @duration INT = (SELECT Duration FROM MembershipPlans WHERE PlanID = @pl
 DECLARE @startDate DATETIME = GETDATE();
 DECLARE @endDate DATETIME = DATEADD(DAY, @duration, @startDate);
 
-INSERT INTO Payments (UserID, PlanID, Amount, PaymentMethod, Status, TransactionID, StartDate, EndDate, Note)
-VALUES (@userID, @planID, @amount, 'BankTransfer', 'confirmed', 'TX123456789', @startDate, @endDate, N'Đăng ký qua trang web');
+---INSERT INTO Payments (UserID, PlanID, Amount, PaymentMethod, Status, TransactionID, StartDate, EndDate, Note)
+---VALUES (@userID, @planID, @amount, 'BankTransfer', 'confirmed', 'TX123456789', @startDate, @endDate, N'Đăng ký qua trang web');
 
 INSERT INTO UserMemberships (UserID, PlanID, StartDate, EndDate, Status)
 VALUES (@userID, @planID, @startDate, @endDate, 'active');
@@ -558,14 +560,26 @@ VALUES
  N'Tiếng Việt, Tiếng Anh', 
  N'Thứ 2-6: 8:00-17:00, Thứ 7: 8:00-12:00', 
  N'Video call, Voice call, Chat', 
- 85.5, 150);
+ 85.5, 150),
+(5, N'Bác sĩ chuyên khoa với hơn 8 năm kinh nghiệm trong lĩnh vực cai nghiện thuốc lá. Tôi áp dụng phương pháp khoa học kết hợp với tâm lý trị liệu để giúp bệnh nhân cai thuốc hiệu quả.', 
+ N'Y học cai nghiện, Tâm lý trị liệu, Dinh dưỡng sức khỏe', 8, 300000.00, 1, 8, 
+ N'Tiến sĩ Y khoa - Đại học Y dược TP.HCM, Thạc sĩ Tâm lý lâm sàng', 
+ N'Chứng chỉ bác sĩ chuyên khoa nội, Chứng chỉ tư vấn cai nghiện quốc tế, Chứng chỉ NLP (Neuro-Linguistic Programming)', 
+ N'Tiếng Việt, Tiếng Anh, Tiếng Pháp', 
+ N'Thứ 2-7: 9:00-18:00, Chủ nhật: 9:00-15:00', 
+ N'Video call, Voice call, Chat, Tư vấn trực tiếp', 
+ 92.8, 280);
 
 -- Insert sample reviews
 INSERT INTO CoachReviews (CoachUserID, ClientName, ReviewTitle, ReviewContent, Rating, IsAnonymous, IsVerified, IsPublic)
 VALUES 
 (3, N'Nguyễn Văn A', N'Coach rất tận tâm', N'Coach Smith đã giúp tôi rất nhiều trong việc cai thuốc. Những lời khuyên của coach rất thiết thực và hiệu quả.', 5, 0, 1, 1),
 (3, N'Trần Thị B', N'Phương pháp hiệu quả', N'Tôi đã thử nhiều cách nhưng không thành công. Nhờ có coach mà tôi đã cai được thuốc sau 3 tháng.', 5, 0, 1, 1),
-(3, N'Lê Văn C', N'Hỗ trợ tốt', N'Coach luôn sẵn sàng hỗ trợ khi tôi gặp khó khăn. Rất recommend!', 4, 0, 1, 1);
+(3, N'Lê Văn C', N'Hỗ trợ tốt', N'Coach luôn sẵn sàng hỗ trợ khi tôi gặp khó khăn. Rất recommend!', 4, 0, 1, 1),
+(5, N'Phạm Thị D', N'Bác sĩ chuyên nghiệp', N'Dr. Minh rất chuyên nghiệp và am hiểu. Phương pháp điều trị của bác sĩ rất khoa học và hiệu quả.', 5, 0, 1, 1),
+(5, N'Trần Văn E', N'Cai thuốc thành công', N'Sau 6 tháng theo dõi với Dr. Minh, tôi đã hoàn toàn cai được thuốc. Cảm ơn bác sĩ rất nhiều!', 5, 0, 1, 1),
+(5, N'Nguyễn Thị F', N'Tư vấn tận tình', N'Bác sĩ tư vấn rất kỹ lưỡng và kiên nhẫn. Giải đáp mọi thắc mắc của tôi một cách chi tiết.', 4, 0, 1, 1),
+(5, N'Lê Văn G', N'Hiệu quả cao', N'Phương pháp của Dr. Minh giúp tôi giảm được cơn thèm thuốc rất nhanh. Highly recommended!', 5, 0, 1, 1);
 
 CREATE TABLE CoachFeedback (
     FeedbackID INT IDENTITY(1,1) PRIMARY KEY,
@@ -592,7 +606,22 @@ VALUES
 (3, 2, NULL, 5, N'Coach Smith rất tận tâm và kiên nhẫn. Những lời khuyên của coach đã giúp em rất nhiều trong việc cai thuốc.', 
  '{"professionalism": 5, "helpfulness": 5, "communication": 5, "knowledge": 4}', 0),
 (3, 4, NULL, 4, N'Coach có kiến thức chuyên môn tốt, tuy nhiên em mong muốn có thêm thời gian tư vấn.', 
- '{"professionalism": 4, "helpfulness": 4, "communication": 4, "knowledge": 5}', 1);
+ '{"professionalism": 4, "helpfulness": 4, "communication": 4, "knowledge": 5}', 1),
+(5, 2, NULL, 5, N'Dr. Minh là bác sĩ rất chuyên nghiệp. Phương pháp điều trị khoa học và hiệu quả, tôi đã cai thuốc thành công sau 4 tháng.', 
+ '{"professionalism": 5, "helpfulness": 5, "communication": 5, "knowledge": 5}', 0);
+
+-- Notifications Table
+CREATE TABLE Notifications (
+    NotificationID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    Type NVARCHAR(50) NOT NULL,
+    Title NVARCHAR(255) NOT NULL,
+    Message NVARCHAR(MAX) NOT NULL,
+    RelatedID INT NULL,
+    IsRead BIT DEFAULT 0,
+    CreatedAt DATETIME DEFAULT GETDATE(),
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
 GO
 
 -- Coach Statistics View (để tính toán thống kê đánh giá)

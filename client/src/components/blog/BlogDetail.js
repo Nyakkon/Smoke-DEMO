@@ -16,7 +16,12 @@ import {
     Stack,
     IconButton,
     Menu,
-    MenuItem
+    MenuItem,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogContentText,
+    DialogActions
 } from '@mui/material';
 import {
     Visibility as ViewIcon,
@@ -25,9 +30,11 @@ import {
     MoreVert as MoreVertIcon,
     Edit as EditIcon,
     Delete as DeleteIcon,
-    ArrowBack as ArrowBackIcon
+    ArrowBack as ArrowBackIcon,
+    Warning as WarningIcon
 } from '@mui/icons-material';
 import { getBlogPost, getComments, addComment, deleteBlogPost, clearCurrentPost } from '../../store/slices/blogSlice';
+import { getCurrentUser } from '../../store/slices/authSlice';
 import { formatDate } from '../../utils/dateUtils';
 
 const BlogDetail = () => {
@@ -36,8 +43,10 @@ const BlogDetail = () => {
     const dispatch = useDispatch();
     const { currentPost, comments, loading, error, success } = useSelector(state => state.blog);
     const { user } = useSelector(state => state.auth);
+    const authState = useSelector(state => state.auth);
     const [comment, setComment] = useState('');
     const [anchorEl, setAnchorEl] = useState(null);
+    const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
 
     useEffect(() => {
         dispatch(getBlogPost(postId));
@@ -47,6 +56,17 @@ const BlogDetail = () => {
             dispatch(clearCurrentPost());
         };
     }, [dispatch, postId]);
+
+    // Enhanced user authentication effect
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        const storedUser = localStorage.getItem('user');
+
+        if (token && !user) {
+            console.log('Token exists but no user in Redux, calling getCurrentUser...');
+            dispatch(getCurrentUser());
+        }
+    }, [dispatch, user]);
 
     useEffect(() => {
         if (success) {
@@ -76,10 +96,13 @@ const BlogDetail = () => {
     };
 
     const handleDelete = () => {
-        if (window.confirm('Bạn có chắc chắn muốn xóa bài viết này?')) {
-            dispatch(deleteBlogPost(postId));
-        }
+        setOpenDeleteDialog(true);
         handleMenuClose();
+    };
+
+    const handleDeleteConfirm = () => {
+        dispatch(deleteBlogPost(postId));
+        setOpenDeleteDialog(false);
     };
 
     const handleShare = () => {
@@ -94,6 +117,50 @@ const BlogDetail = () => {
             alert('Link đã được sao chép vào clipboard!');
         }
     };
+
+    // Enhanced getStoredUser function
+    const getStoredUser = () => {
+        try {
+            const storedUser = localStorage.getItem('user');
+
+            if (!storedUser) {
+                return null;
+            }
+
+            const parsedUser = JSON.parse(storedUser);
+            return parsedUser;
+        } catch (error) {
+            console.error('Error parsing stored user:', error);
+            return null;
+        }
+    };
+
+    const storedUser = getStoredUser();
+    const currentUser = user || storedUser;
+
+    // Enhanced author check with multiple comparison methods and correct field names
+    const isAuthor = currentUser && currentPost && (() => {
+        // Get user ID from either 'id' or 'UserID' field (authSlice uses 'id')
+        const userId = currentUser.UserID || currentUser.id;
+
+        if (!userId) {
+            return false;
+        }
+
+        const result = (
+            parseInt(userId) === parseInt(currentPost.AuthorID) ||
+            String(userId) === String(currentPost.AuthorID) ||
+            userId === currentPost.AuthorID
+        );
+
+        return result;
+    })();
+
+    // Check if current user is admin
+    const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.Role === 'admin');
+
+    // Show menu if user is author (for delete) or admin (for both edit and delete)
+    const showMenu = isAuthor || isAdmin;
 
     if (loading) {
         return (
@@ -140,8 +207,6 @@ const BlogDetail = () => {
             </Container>
         );
     }
-
-    const isAuthor = user && user.UserID === currentPost.AuthorID;
 
     return (
         <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -192,7 +257,8 @@ const BlogDetail = () => {
                         <IconButton onClick={handleShare} color="primary">
                             <ShareIcon />
                         </IconButton>
-                        {isAuthor && (
+
+                        {showMenu && (
                             <>
                                 <IconButton onClick={handleMenuOpen}>
                                     <MoreVertIcon />
@@ -202,14 +268,18 @@ const BlogDetail = () => {
                                     open={Boolean(anchorEl)}
                                     onClose={handleMenuClose}
                                 >
-                                    <MenuItem onClick={handleEdit}>
-                                        <EditIcon sx={{ mr: 1 }} />
-                                        Chỉnh sửa
-                                    </MenuItem>
-                                    <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
-                                        <DeleteIcon sx={{ mr: 1 }} />
-                                        Xóa bài viết
-                                    </MenuItem>
+                                    {isAdmin && (
+                                        <MenuItem onClick={handleEdit}>
+                                            <EditIcon sx={{ mr: 1 }} />
+                                            Chỉnh sửa
+                                        </MenuItem>
+                                    )}
+                                    {(isAuthor || isAdmin) && (
+                                        <MenuItem onClick={handleDelete} sx={{ color: 'error.main' }}>
+                                            <DeleteIcon sx={{ mr: 1 }} />
+                                            Xóa bài viết
+                                        </MenuItem>
+                                    )}
                                 </Menu>
                             </>
                         )}
@@ -301,11 +371,11 @@ const BlogDetail = () => {
                 <Divider sx={{ mb: 3 }} />
 
                 {/* Comment Form */}
-                {user ? (
+                {currentUser ? (
                     <Box component="form" onSubmit={handleSubmitComment} sx={{ mb: 4 }}>
                         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
                             <Avatar sx={{ bgcolor: 'primary.main' }}>
-                                {user.FirstName?.charAt(0)}
+                                {currentUser.FirstName?.charAt(0)}
                             </Avatar>
                             <TextField
                                 fullWidth
@@ -380,6 +450,48 @@ const BlogDetail = () => {
                     </Box>
                 )}
             </Paper>
+
+            {/* Delete Dialog */}
+            <Dialog
+                open={openDeleteDialog}
+                onClose={() => setOpenDeleteDialog(false)}
+                aria-labelledby="alert-dialog-title"
+                aria-describedby="alert-dialog-description"
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle id="alert-dialog-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <WarningIcon color="error" />
+                    Xác nhận xóa bài viết
+                </DialogTitle>
+                <DialogContent>
+                    <DialogContentText id="alert-dialog-description" sx={{ fontSize: '1rem', mb: 2 }}>
+                        Bạn có chắc chắn muốn xóa bài viết <strong>&quot;{currentPost?.Title}&quot;</strong> không?
+                    </DialogContentText>
+                    <Alert severity="warning" sx={{ mt: 2 }}>
+                        Hành động này không thể hoàn tác. Bài viết sẽ bị xóa vĩnh viễn.
+                    </Alert>
+                </DialogContent>
+                <DialogActions sx={{ p: 3, gap: 1 }}>
+                    <Button
+                        onClick={() => setOpenDeleteDialog(false)}
+                        variant="outlined"
+                        size="large"
+                    >
+                        Hủy
+                    </Button>
+                    <Button
+                        onClick={handleDeleteConfirm}
+                        variant="contained"
+                        color="error"
+                        size="large"
+                        autoFocus
+                        startIcon={<DeleteIcon />}
+                    >
+                        Xóa bài viết
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Container>
     );
 };

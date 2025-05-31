@@ -426,27 +426,86 @@ router.post('/progress', auth, async (req, res) => {
 
         let moneySaved = 0;
         let daysSmokeFree = 0;
+        let baselineCigarettesPerDay = 10; // Default half pack per day
+        let cigarettePrice = 1500; // Default 1500 VNĐ per cigarette
 
+        // Try to get baseline from existing smoking status
         if (smokingInfo.recordset.length > 0) {
             const { CigarettesPerDay, CigarettePrice } = smokingInfo.recordset[0];
-
-            // Calculate money saved for this day
-            const cigarettesNotSmoked = Math.max(0, CigarettesPerDay - cigarettesSmoked);
-            moneySaved = cigarettesNotSmoked * CigarettePrice;
-
-            // Calculate total smoke-free days
-            const smokeFreeQuery = await pool.request()
+            baselineCigarettesPerDay = CigarettesPerDay || 10;
+            cigarettePrice = CigarettePrice || 1500;
+        } else {
+            // Try to get baseline from survey data if smoking status doesn't exist
+            const surveyInfo = await pool.request()
                 .input('UserID', req.user.UserID)
                 .query(`
-                    SELECT COUNT(*) as SmokeFreeDays
-                    FROM ProgressTracking 
-                    WHERE UserID = @UserID AND CigarettesSmoked = 0
+                    SELECT ua.AnswerText
+                    FROM UserSurveyAnswers ua
+                    INNER JOIN SurveyQuestions sq ON ua.QuestionID = sq.QuestionID
+                    WHERE ua.UserID = @UserID 
+                    AND sq.QuestionText LIKE N'%bao nhiêu điếu%'
+                    AND sq.DisplayOrder = 2
                 `);
 
-            daysSmokeFree = smokeFreeQuery.recordset[0].SmokeFreeDays;
-            if (cigarettesSmoked === 0) {
-                daysSmokeFree += 1; // Add current day if smoke-free
+            if (surveyInfo.recordset.length > 0) {
+                const surveyAnswer = parseInt(surveyInfo.recordset[0].AnswerText);
+                if (!isNaN(surveyAnswer) && surveyAnswer > 0) {
+                    baselineCigarettesPerDay = surveyAnswer;
+
+                    // Auto-create smoking status from survey data
+                    await pool.request()
+                        .input('UserID', req.user.UserID)
+                        .input('CigarettesPerDay', baselineCigarettesPerDay)
+                        .input('CigarettePrice', cigarettePrice)
+                        .query(`
+                            INSERT INTO SmokingStatus (UserID, CigarettesPerDay, CigarettePrice, SmokingFrequency)
+                            VALUES (@UserID, @CigarettesPerDay, @CigarettePrice, N'Từ dữ liệu khảo sát')
+                        `);
+                }
             }
+
+            // Also try from UserSurvey table
+            const userSurveyInfo = await pool.request()
+                .input('UserID', req.user.UserID)
+                .query(`
+                    SELECT CigarettesPerDay
+                    FROM UserSurvey 
+                    WHERE UserID = @UserID
+                `);
+
+            if (userSurveyInfo.recordset.length > 0 && userSurveyInfo.recordset[0].CigarettesPerDay) {
+                baselineCigarettesPerDay = userSurveyInfo.recordset[0].CigarettesPerDay;
+
+                // Auto-create smoking status from user survey
+                if (smokingInfo.recordset.length === 0) {
+                    await pool.request()
+                        .input('UserID', req.user.UserID)
+                        .input('CigarettesPerDay', baselineCigarettesPerDay)
+                        .input('CigarettePrice', cigarettePrice)
+                        .query(`
+                            INSERT INTO SmokingStatus (UserID, CigarettesPerDay, CigarettePrice, SmokingFrequency)
+                            VALUES (@UserID, @CigarettesPerDay, @CigarettePrice, N'Từ dữ liệu survey')
+                        `);
+                }
+            }
+        }
+
+        // Calculate money saved with improved formula
+        const cigarettesNotSmoked = Math.max(0, baselineCigarettesPerDay - cigarettesSmoked);
+        moneySaved = cigarettesNotSmoked * cigarettePrice;
+
+        // Calculate total smoke-free days
+        const smokeFreeQuery = await pool.request()
+            .input('UserID', req.user.UserID)
+            .query(`
+                SELECT COUNT(*) as SmokeFreeDays
+                FROM ProgressTracking 
+                WHERE UserID = @UserID AND CigarettesSmoked = 0
+            `);
+
+        daysSmokeFree = smokeFreeQuery.recordset[0].SmokeFreeDays;
+        if (cigarettesSmoked === 0) {
+            daysSmokeFree += 1; // Add current day if smoke-free
         }
 
         const result = await pool.request()
@@ -810,6 +869,186 @@ router.get('/debug-fields', auth, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error debugging fields'
+        });
+    }
+});
+
+// Get assigned coach for current member
+router.get('/assigned-coach', auth, async (req, res) => {
+    try {
+        const userId = req.user.UserID;
+        const userRole = req.user.Role;
+
+        console.log('🔍 === ASSIGNED COACH API START ===');
+        console.log('   UserID:', userId);
+        console.log('   UserRole:', userRole);
+        console.log('   User object:', req.user);
+
+        // Check if user is member or guest
+        if (userRole !== 'member' && userRole !== 'guest') {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ member và guest mới có thể xem coach được phân công'
+            });
+        }
+
+        // First check what QuitPlans this user has
+        const quitPlansCheck = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    qp.PlanID,
+                    qp.UserID,
+                    qp.CoachID,
+                    qp.Status,
+                    qp.StartDate,
+                    u.Email as UserEmail,
+                    c.Email as CoachEmail,
+                    c.FirstName as CoachFirstName,
+                    c.LastName as CoachLastName
+                FROM QuitPlans qp
+                LEFT JOIN Users u ON qp.UserID = u.UserID
+                LEFT JOIN Users c ON qp.CoachID = c.UserID
+                WHERE qp.UserID = @UserID
+                ORDER BY qp.CreatedAt DESC
+            `);
+
+        console.log('   All QuitPlans for this user:', quitPlansCheck.recordset);
+
+        // Get assigned coach through QuitPlans
+        const result = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    c.UserID as CoachID,
+                    c.Email as CoachEmail,
+                    c.FirstName as CoachFirstName,
+                    c.LastName as CoachLastName,
+                    c.Avatar as CoachAvatar,
+                    c.PhoneNumber as CoachPhoneNumber,
+                    cp.Bio,
+                    cp.Specialization,
+                    cp.Experience,
+                    cp.HourlyRate,
+                    cp.IsAvailable,
+                    cp.YearsOfExperience,
+                    cp.Education,
+                    cp.Certifications,
+                    cp.Languages,
+                    cp.WorkingHours,
+                    cp.ConsultationTypes,
+                    qp.PlanID as QuitPlanID,
+                    qp.StartDate as AssignmentDate,
+                    qp.Status as QuitPlanStatus,
+                    (SELECT AVG(CAST(Rating AS FLOAT)) FROM CoachFeedback WHERE CoachID = c.UserID AND Status = 'active') as AverageRating,
+                    (SELECT COUNT(*) FROM CoachFeedback WHERE CoachID = c.UserID AND Status = 'active') as ReviewCount
+                FROM QuitPlans qp
+                INNER JOIN Users c ON qp.CoachID = c.UserID
+                LEFT JOIN CoachProfiles cp ON c.UserID = cp.UserID
+                WHERE qp.UserID = @UserID 
+                    AND qp.Status = 'active'
+                    AND qp.CoachID IS NOT NULL
+                    AND c.Role = 'coach'
+                    AND c.IsActive = 1
+            `);
+
+        console.log('   Assigned coach query result count:', result.recordset.length);
+        console.log('   Assigned coach query result:', result.recordset);
+
+        if (result.recordset.length === 0) {
+            console.log('❌ No assigned coach found for member:', userId);
+            console.log('❌ Possible reasons:');
+            console.log('   - No QuitPlan with status = "active"');
+            console.log('   - QuitPlan.CoachID is NULL');
+            console.log('   - Coach user not found or not active');
+            console.log('   - Coach role is not "coach"');
+
+            // Additional debug: Check what QuitPlans exist for this user
+            const debugPlans = await pool.request()
+                .input('UserID', userId)
+                .query(`
+                    SELECT 
+                        qp.PlanID,
+                        qp.Status,
+                        qp.CoachID,
+                        qp.StartDate,
+                        c.Email as CoachEmail,
+                        c.IsActive as CoachIsActive,
+                        c.Role as CoachRole
+                    FROM QuitPlans qp
+                    LEFT JOIN Users c ON qp.CoachID = c.UserID
+                    WHERE qp.UserID = @UserID
+                    ORDER BY qp.CreatedAt DESC
+                `);
+
+            console.log('🔍 Debug - All QuitPlans for this user:', debugPlans.recordset);
+
+            return res.json({
+                success: true,
+                data: null,
+                debug: {
+                    userId: userId,
+                    allQuitPlans: debugPlans.recordset,
+                    queryConditions: {
+                        hasActiveQuitPlan: debugPlans.recordset.some(p => p.Status === 'active'),
+                        hasCoachAssigned: debugPlans.recordset.some(p => p.CoachID !== null),
+                        coachDetails: debugPlans.recordset.map(p => ({
+                            coachId: p.CoachID,
+                            coachEmail: p.CoachEmail,
+                            coachActive: p.CoachIsActive,
+                            coachRole: p.CoachRole
+                        }))
+                    }
+                },
+                message: 'Bạn chưa được phân công coach nào. Vui lòng liên hệ admin để được hỗ trợ.'
+            });
+        }
+
+        const coach = result.recordset[0];
+
+        const assignedCoach = {
+            id: coach.CoachID,
+            email: coach.CoachEmail,
+            firstName: coach.CoachFirstName,
+            lastName: coach.CoachLastName,
+            fullName: `${coach.CoachFirstName} ${coach.CoachLastName}`,
+            avatar: coach.CoachAvatar,
+            phoneNumber: coach.CoachPhoneNumber,
+            bio: coach.Bio,
+            specialization: coach.Specialization,
+            experience: coach.Experience,
+            hourlyRate: coach.HourlyRate,
+            isAvailable: coach.IsAvailable === true || coach.IsAvailable === 1,
+            yearsOfExperience: coach.YearsOfExperience,
+            education: coach.Education,
+            certifications: coach.Certifications,
+            languages: coach.Languages,
+            workingHours: coach.WorkingHours,
+            consultationTypes: coach.ConsultationTypes,
+            averageRating: coach.AverageRating ? parseFloat(coach.AverageRating).toFixed(1) : 0,
+            reviewCount: coach.ReviewCount || 0,
+            assignment: {
+                quitPlanId: coach.QuitPlanID,
+                assignmentDate: coach.AssignmentDate,
+                status: coach.QuitPlanStatus
+            }
+        };
+
+        console.log('✅ Found assigned coach:', assignedCoach.fullName);
+        console.log('✅ Returning coach data:', assignedCoach);
+
+        res.json({
+            success: true,
+            data: assignedCoach,
+            message: `Coach được phân công: ${assignedCoach.fullName}`
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting assigned coach:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi lấy thông tin coach được phân công',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 });

@@ -99,9 +99,14 @@ router.post('/', protect, checkProgressAccess, async (req, res) => {
         if (smokingInfo.recordset.length > 0) {
             const { CigarettesPerDay, CigarettePrice } = smokingInfo.recordset[0];
 
+            // Improved calculation: Use standard pricing if not set
+            // Standard: 1 pack = 20 cigarettes = 30,000 VNĐ → 1 cigarette = 1,500 VNĐ
+            const standardCigarettePrice = CigarettePrice || 1500;
+            const baselineCigarettesPerDay = CigarettesPerDay || 10; // Default to half pack per day
+
             // Calculate money saved for this day
-            const cigarettesNotSmoked = Math.max(0, CigarettesPerDay - cigarettesSmoked);
-            moneySaved = cigarettesNotSmoked * CigarettePrice;
+            const cigarettesNotSmoked = Math.max(0, baselineCigarettesPerDay - cigarettesSmoked);
+            moneySaved = cigarettesNotSmoked * standardCigarettePrice;
 
             // Calculate total smoke-free days
             const smokeFreeQuery = await pool.request()
@@ -115,6 +120,18 @@ router.post('/', protect, checkProgressAccess, async (req, res) => {
             daysSmokeFree = smokeFreeQuery.recordset[0].SmokeFreeDays;
             if (cigarettesSmoked === 0) {
                 daysSmokeFree += 1; // Add current day if smoke-free
+            }
+        } else {
+            // Default calculation if no smoking status is set
+            // Assume standard baseline: 10 cigarettes per day (half pack) at 1500 VNĐ per cigarette
+            const defaultCigarettesPerDay = 10;
+            const defaultCigarettePrice = 1500;
+
+            const cigarettesNotSmoked = Math.max(0, defaultCigarettesPerDay - cigarettesSmoked);
+            moneySaved = cigarettesNotSmoked * defaultCigarettePrice;
+
+            if (cigarettesSmoked === 0) {
+                daysSmokeFree = 1;
             }
         }
 
@@ -289,11 +306,24 @@ router.get('/summary', protect, checkProgressAccess, async (req, res) => {
 
         if (smokingInfo.recordset.length > 0 && summaryData.TotalDaysTracked > 0) {
             const { CigarettesPerDay, CigarettePrice } = smokingInfo.recordset[0];
-            potentialCigarettes = summaryData.TotalDaysTracked * CigarettesPerDay;
 
-            // Recalculate total savings if needed
+            // Use standard pricing and baseline from survey data
+            const standardCigarettePrice = CigarettePrice || 1500; // 1 cigarette = 1500 VNĐ
+            const baselineCigarettesPerDay = CigarettesPerDay || 10; // Default half pack per day
+
+            potentialCigarettes = summaryData.TotalDaysTracked * baselineCigarettesPerDay;
+
+            // Recalculate total savings with improved formula
             const cigarettesNotSmoked = potentialCigarettes - (summaryData.TotalCigarettesSmoked || 0);
-            totalSavings = Math.max(totalSavings, cigarettesNotSmoked * CigarettePrice);
+            totalSavings = Math.max(totalSavings, cigarettesNotSmoked * standardCigarettePrice);
+        } else {
+            // Use default values if no smoking info available
+            const defaultCigarettesPerDay = 10; // Half pack per day
+            const defaultCigarettePrice = 1500; // Standard price per cigarette
+
+            potentialCigarettes = summaryData.TotalDaysTracked * defaultCigarettesPerDay;
+            const cigarettesNotSmoked = potentialCigarettes - (summaryData.TotalCigarettesSmoked || 0);
+            totalSavings = Math.max(totalSavings, cigarettesNotSmoked * defaultCigarettePrice);
         }
 
         // Always return 200 OK with fresh data for achievement checking
@@ -321,7 +351,7 @@ router.get('/summary', protect, checkProgressAccess, async (req, res) => {
 // PUBLIC endpoint: Get basic progress summary without authentication (for demo purposes)
 router.get('/public-summary', async (req, res) => {
     try {
-        // Use a default user or return dummy data for demo
+        // Use a default user or return realistic calculated data
         const defaultUserId = 2; // Use the test user we created
 
         const result = await pool.request()
@@ -342,34 +372,84 @@ router.get('/public-summary', async (req, res) => {
 
         const summaryData = result.recordset[0];
 
-        // Return basic summary or dummy data if no data exists
+        // If no data exists, calculate realistic demo values
+        if (!summaryData.TotalDaysTracked || summaryData.TotalDaysTracked === 0) {
+            const demoDaysTracked = 7;
+            const demoSmokeFreeDays = 7;
+            const baselineCigarettesPerDay = 10; // Half pack per day
+            const cigarettePrice = 1500; // Standard price
+            const potentialCigarettes = demoDaysTracked * baselineCigarettesPerDay;
+            const actualCigarettes = 0; // Demo user is smoke-free
+            const calculatedSavings = (potentialCigarettes - actualCigarettes) * cigarettePrice;
+
+            return res.json({
+                success: true,
+                data: {
+                    TotalDaysTracked: demoDaysTracked,
+                    SmokeFreeDays: demoSmokeFreeDays,
+                    TotalMoneySaved: calculatedSavings, // 105,000 VNĐ (7 × 10 × 1500)
+                    TotalCigarettesSmoked: actualCigarettes,
+                    AverageCigarettesPerDay: 0,
+                    AverageCravingLevel: 2,
+                    CigarettesNotSmoked: potentialCigarettes,
+                    SmokeFreePercentage: 100,
+                    calculation: {
+                        description: `${demoDaysTracked} ngày × ${baselineCigarettesPerDay} điếu/ngày × ${cigarettePrice.toLocaleString('vi-VN')} VNĐ/điếu`,
+                        isDemo: true
+                    }
+                }
+            });
+        }
+
+        // Calculate actual data if available
+        const baselineCigarettesPerDay = 10; // Default baseline
+        const cigarettePrice = 1500; // Standard price
+        const potentialCigarettes = summaryData.TotalDaysTracked * baselineCigarettesPerDay;
+        const actualCigarettes = summaryData.TotalCigarettesSmoked || 0;
+        const calculatedSavings = (potentialCigarettes - actualCigarettes) * cigarettePrice;
+
         res.json({
             success: true,
             data: {
-                TotalDaysTracked: summaryData.TotalDaysTracked || 7,
-                SmokeFreeDays: summaryData.SmokeFreeDays || 7,
-                TotalMoneySaved: summaryData.TotalMoneySaved || 350000,
-                TotalCigarettesSmoked: summaryData.TotalCigarettesSmoked || 0,
+                TotalDaysTracked: summaryData.TotalDaysTracked,
+                SmokeFreeDays: summaryData.SmokeFreeDays || 0,
+                TotalMoneySaved: Math.max(summaryData.TotalMoneySaved || 0, calculatedSavings),
+                TotalCigarettesSmoked: actualCigarettes,
                 AverageCigarettesPerDay: summaryData.AverageCigarettesPerDay || 0,
-                AverageCravingLevel: summaryData.AverageCravingLevel || 3,
-                CigarettesNotSmoked: 140, // Example: 7 days * 20 cigarettes/day
-                SmokeFreePercentage: 100
+                AverageCravingLevel: summaryData.AverageCravingLevel || 0,
+                CigarettesNotSmoked: potentialCigarettes - actualCigarettes,
+                SmokeFreePercentage: summaryData.TotalDaysTracked > 0 ?
+                    (summaryData.SmokeFreeDays / summaryData.TotalDaysTracked * 100) : 0,
+                calculation: {
+                    description: `${summaryData.TotalDaysTracked} ngày × ${baselineCigarettesPerDay} điếu/ngày × ${cigarettePrice.toLocaleString('vi-VN')} VNĐ/điếu`,
+                    isDemo: false
+                }
             }
         });
     } catch (error) {
         console.error('❌ Error getting public progress summary:', error);
-        // Return dummy data if database fails
+        // Return calculated demo data if database fails
+        const demoDaysTracked = 7;
+        const baselineCigarettesPerDay = 10;
+        const cigarettePrice = 1500;
+        const calculatedSavings = demoDaysTracked * baselineCigarettesPerDay * cigarettePrice;
+
         res.json({
             success: true,
             data: {
-                TotalDaysTracked: 7,
-                SmokeFreeDays: 7,
-                TotalMoneySaved: 350000,
+                TotalDaysTracked: demoDaysTracked,
+                SmokeFreeDays: demoDaysTracked,
+                TotalMoneySaved: calculatedSavings,
                 TotalCigarettesSmoked: 0,
                 AverageCigarettesPerDay: 0,
-                AverageCravingLevel: 3,
-                CigarettesNotSmoked: 140,
-                SmokeFreePercentage: 100
+                AverageCravingLevel: 2,
+                CigarettesNotSmoked: demoDaysTracked * baselineCigarettesPerDay,
+                SmokeFreePercentage: 100,
+                calculation: {
+                    description: `${demoDaysTracked} ngày × ${baselineCigarettesPerDay} điếu/ngày × ${cigarettePrice.toLocaleString('vi-VN')} VNĐ/điếu`,
+                    isDemo: true,
+                    error: "Database connection failed"
+                }
             }
         });
     }
@@ -555,7 +635,7 @@ router.get('/advice', protect, checkProgressAccess, async (req, res) => {
 // Get savings calculation with detailed breakdown
 router.get('/savings', protect, checkProgressAccess, async (req, res) => {
     try {
-        // Get user's smoking baseline
+        // Get user's smoking baseline from smoking status
         const smokingInfo = await pool.request()
             .input('UserID', req.user.UserID)
             .query(`
@@ -565,14 +645,47 @@ router.get('/savings', protect, checkProgressAccess, async (req, res) => {
                 ORDER BY LastUpdated DESC
             `);
 
-        if (!smokingInfo.recordset[0]) {
-            return res.json({
-                success: false,
-                message: 'Chưa có thông tin thói quen hút thuốc. Vui lòng cập nhật thông tin cá nhân trước.'
-            });
-        }
+        // Try to get baseline from survey if smoking status is not available
+        let baselineCigarettesPerDay = 10; // Default half pack
+        let cigarettePrice = 1500; // Default 1500 VNĐ per cigarette
 
-        const { CigarettesPerDay, CigarettePrice } = smokingInfo.recordset[0];
+        if (smokingInfo.recordset.length > 0) {
+            const { CigarettesPerDay, CigarettePrice } = smokingInfo.recordset[0];
+            baselineCigarettesPerDay = CigarettesPerDay || 10;
+            cigarettePrice = CigarettePrice || 1500;
+        } else {
+            // Try to get from survey data (question 2 about cigarettes per day)
+            const surveyInfo = await pool.request()
+                .input('UserID', req.user.UserID)
+                .query(`
+                    SELECT ua.AnswerText
+                    FROM UserSurveyAnswers ua
+                    INNER JOIN SurveyQuestions sq ON ua.QuestionID = sq.QuestionID
+                    WHERE ua.UserID = @UserID 
+                    AND sq.QuestionText LIKE N'%bao nhiêu điếu%'
+                    AND sq.DisplayOrder = 2
+                `);
+
+            if (surveyInfo.recordset.length > 0) {
+                const surveyAnswer = parseInt(surveyInfo.recordset[0].AnswerText);
+                if (!isNaN(surveyAnswer) && surveyAnswer > 0) {
+                    baselineCigarettesPerDay = surveyAnswer;
+                }
+            }
+
+            // Also try from UserSurvey table
+            const userSurveyInfo = await pool.request()
+                .input('UserID', req.user.UserID)
+                .query(`
+                    SELECT CigarettesPerDay
+                    FROM UserSurvey 
+                    WHERE UserID = @UserID
+                `);
+
+            if (userSurveyInfo.recordset.length > 0 && userSurveyInfo.recordset[0].CigarettesPerDay) {
+                baselineCigarettesPerDay = userSurveyInfo.recordset[0].CigarettesPerDay;
+            }
+        }
 
         // Get progress summary
         const progressInfo = await pool.request()
@@ -588,15 +701,15 @@ router.get('/savings', protect, checkProgressAccess, async (req, res) => {
 
         const { DaysTracked, TotalSmoked } = progressInfo.recordset[0];
 
-        // Calculate potential vs actual
-        const potentialCigarettes = DaysTracked * CigarettesPerDay;
+        // Calculate potential vs actual with improved formula
+        const potentialCigarettes = DaysTracked * baselineCigarettesPerDay;
         const actualCigarettes = TotalSmoked || 0;
         const cigarettesNotSmoked = Math.max(0, potentialCigarettes - actualCigarettes);
-        const moneySaved = cigarettesNotSmoked * CigarettePrice;
+        const moneySaved = cigarettesNotSmoked * cigarettePrice;
 
         // Calculate daily average savings
-        const dailyPotentialCost = CigarettesPerDay * CigarettePrice;
-        const dailyActualCost = DaysTracked > 0 ? (actualCigarettes / DaysTracked) * CigarettePrice : 0;
+        const dailyPotentialCost = baselineCigarettesPerDay * cigarettePrice;
+        const dailyActualCost = DaysTracked > 0 ? (actualCigarettes / DaysTracked) * cigarettePrice : 0;
         const dailyAvgSavings = dailyPotentialCost - dailyActualCost;
 
         res.json({
@@ -607,14 +720,19 @@ router.get('/savings', protect, checkProgressAccess, async (req, res) => {
                 daysTracked: DaysTracked,
                 dailyAverageSavings: dailyAvgSavings,
                 baseline: {
-                    cigarettesPerDay: CigarettesPerDay,
-                    cigarettePrice: CigarettePrice,
+                    cigarettesPerDay: baselineCigarettesPerDay,
+                    cigarettePrice: cigarettePrice,
                     dailyCost: dailyPotentialCost
                 },
                 actual: {
                     totalCigarettes: actualCigarettes,
                     averagePerDay: DaysTracked > 0 ? actualCigarettes / DaysTracked : 0,
                     dailyCost: dailyActualCost
+                },
+                calculation: {
+                    description: `Tính toán dựa trên ${baselineCigarettesPerDay} điếu/ngày × ${cigarettePrice.toLocaleString('vi-VN')} VNĐ/điếu`,
+                    standardPack: "1 gói = 20 điếu = 30,000 VNĐ",
+                    perCigarette: "1 điếu = 1,500 VNĐ (chuẩn)"
                 }
             }
         });

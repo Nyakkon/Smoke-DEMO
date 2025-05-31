@@ -323,6 +323,15 @@ router.delete('/posts/:postId', protect, async (req, res) => {
         // Check if user is admin or the owner of the post
         if (req.user.role === 'admin') {
             // Admin can delete any post
+            // First delete all comments for this post
+            await pool.request()
+                .input('PostID', postId)
+                .query(`
+                DELETE FROM CommunityComments
+                WHERE PostID = @PostID
+            `);
+
+            // Then delete the post
             const result = await pool.request()
                 .input('PostID', postId)
                 .query(`
@@ -345,6 +354,18 @@ router.delete('/posts/:postId', protect, async (req, res) => {
             });
         } else {
             // Regular user can only delete their own posts
+            // First delete all comments for this post if user owns the post
+            await pool.request()
+                .input('PostID', postId)
+                .input('UserID', req.user.UserID)
+                .query(`
+                DELETE FROM CommunityComments
+                WHERE PostID = @PostID AND PostID IN (
+                    SELECT PostID FROM CommunityPosts WHERE PostID = @PostID AND UserID = @UserID
+                )
+            `);
+
+            // Then delete the post
             const result = await pool.request()
                 .input('PostID', postId)
                 .input('UserID', req.user.UserID)
@@ -479,31 +500,58 @@ router.delete('/comments/:commentId', protect, async (req, res) => {
     try {
         const { commentId } = req.params;
 
-        const result = await pool.request()
-            .input('CommentID', commentId)
-            .input('UserID', req.user.UserID)
-            .query(`
-        DELETE FROM CommunityComments
-        OUTPUT DELETED.*
-        WHERE CommentID = @CommentID AND UserID = @UserID
-      `);
+        // Check if user is admin or the owner of the comment
+        if (req.user.role === 'admin') {
+            // Admin can delete any comment
+            const result = await pool.request()
+                .input('CommentID', commentId)
+                .query(`
+                DELETE FROM CommunityComments
+                OUTPUT DELETED.*
+                WHERE CommentID = @CommentID
+            `);
 
-        if (result.recordset.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Comment not found'
+            if (result.recordset.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Community comment not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: result.recordset[0],
+                deletedBy: 'admin'
+            });
+        } else {
+            // Regular user can only delete their own comments
+            const result = await pool.request()
+                .input('CommentID', commentId)
+                .input('UserID', req.user.UserID)
+                .query(`
+                DELETE FROM CommunityComments
+                OUTPUT DELETED.*
+                WHERE CommentID = @CommentID AND UserID = @UserID
+            `);
+
+            if (result.recordset.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Comment not found or you do not have permission to delete it'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: result.recordset[0],
+                deletedBy: 'owner'
             });
         }
-
-        res.json({
-            success: true,
-            data: result.recordset[0]
-        });
     } catch (error) {
-        console.error(error);
+        console.error('Error deleting comment:', error);
         res.status(500).json({
             success: false,
-            message: 'Error deleting comment'
+            message: 'Error deleting community comment'
         });
     }
 });

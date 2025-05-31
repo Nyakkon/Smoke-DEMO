@@ -133,6 +133,114 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
 }
 
+/* Coach button styling */
+.navbar-coach-btn {
+  position: relative !important;
+  overflow: hidden !important;
+  animation: slideIn 0.6s ease-out 0.1s both;
+}
+
+.navbar-coach-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(78, 205, 196, 0.3), transparent);
+  transition: left 0.5s ease;
+  z-index: 0;
+}
+
+.navbar-coach-btn:hover::before {
+  left: 100%;
+}
+
+.navbar-coach-btn:hover {
+  background: linear-gradient(45deg, rgba(78, 205, 196, 0.2), rgba(78, 205, 196, 0.4)) !important;
+  border-color: #4ecdc4 !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 15px rgba(78, 205, 196, 0.3) !important;
+  filter: drop-shadow(0 0 8px rgba(78, 205, 196, 0.6));
+}
+
+.navbar-coach-btn a {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* Pulse effect on focus/active */
+.navbar-coach-btn:focus,
+.navbar-coach-btn:active {
+  animation: pulse 1.5s infinite;
+}
+
+/* Admin button styling */
+.navbar-admin-btn {
+  position: relative !important;
+  overflow: hidden !important;
+  animation: slideIn 0.6s ease-out 0.2s both;
+}
+
+.navbar-admin-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 107, 107, 0.3), transparent);
+  transition: left 0.5s ease;
+  z-index: 0;
+}
+
+.navbar-admin-btn:hover::before {
+  left: 100%;
+}
+
+.navbar-admin-btn:hover {
+  background: linear-gradient(45deg, rgba(255, 107, 107, 0.2), rgba(255, 107, 107, 0.4)) !important;
+  border-color: #ff6b6b !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3) !important;
+  filter: drop-shadow(0 0 8px rgba(255, 107, 107, 0.6));
+}
+
+.navbar-admin-btn a {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* Pulse effect on focus/active */
+.navbar-admin-btn:focus,
+.navbar-admin-btn:active {
+  animation: pulseRed 1.5s infinite;
+}
+
+/* Mobile coach button styling */
+.mobile-coach-btn {
+  border: 1px solid #4ecdc4 !important;
+  background: linear-gradient(45deg, rgba(78, 205, 196, 0.1), rgba(78, 205, 196, 0.2)) !important;
+  transition: all 0.3s ease !important;
+}
+
+.mobile-coach-btn:hover {
+  background: linear-gradient(45deg, rgba(78, 205, 196, 0.2), rgba(78, 205, 196, 0.4)) !important;
+  border-color: #4ecdc4 !important;
+}
+
+/* Mobile admin button styling */
+.mobile-admin-btn {
+  border: 1px solid #ff6b6b !important;
+  background: linear-gradient(45deg, rgba(255, 107, 107, 0.1), rgba(255, 107, 107, 0.2)) !important;
+  transition: all 0.3s ease !important;
+}
+
+.mobile-admin-btn:hover {
+  background: linear-gradient(45deg, rgba(255, 107, 107, 0.2), rgba(255, 107, 107, 0.4)) !important;
+  border-color: #ff6b6b !important;
+}
+
 .navbar-mobile-toggle {
   display: none;
 }
@@ -739,4 +847,234 @@ body {
   flex-grow: 1;
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* Animation keyframes */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(78, 205, 196, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(78, 205, 196, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(78, 205, 196, 0);
+  }
+}
+
+@keyframes pulseRed {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0);
+  }
+}
+
+@keyframes slideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Glow effects for special buttons */
+@keyframes glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 5px rgba(78, 205, 196, 0.5));
+  }
+  50% {
+    filter: drop-shadow(0 0 15px rgba(78, 205, 196, 0.8));
+  }
+}
+
+@keyframes glowRed {
+  0%, 100% {
+    filter: drop-shadow(0 0 5px rgba(255, 107, 107, 0.5));
+  }
+  50% {
+    filter: drop-shadow(0 0 15px rgba(255, 107, 107, 0.8));
+  }
+}
+
+/* Additional hover effects */
+.navbar-coach-btn:hover {
+  animation: glow 2s ease-in-out infinite;
+}
+
+.navbar-admin-btn:hover {
+  animation: glowRed 2s ease-in-out infinite;
+}
+
+/* Badge indicators */
+.navbar-coach-btn::after {
+  content: '🎯';
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.navbar-admin-btn::after {
+  content: '👑';
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Breathing effect for mobile buttons */
+@keyframes breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.mobile-coach-btn,
+.mobile-admin-btn {
+  animation: breathe 3s ease-in-out infinite;
+}
+
+/* Global styles */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Fix ResizeObserver error overlays */
+#webpack-dev-server-client-overlay,
+#webpack-dev-server-client-overlay-div {
+  display: none !important;
+}
+
+/* Suppress specific ResizeObserver error messages */
+.webpack-dev-server-client-overlay-error[data-error*="ResizeObserver"] {
+  display: none !important;
+}
+
+/* Optimize Ant Design Table performance */
+.ant-table-wrapper {
+  /* Prevent unnecessary reflows */
+  contain: layout style paint;
+}
+
+.ant-table-tbody > tr > td {
+  /* Optimize cell rendering */
+  contain: layout;
+}
+
+/* Optimize Popconfirm and Tooltip performance */
+.ant-popover,
+.ant-tooltip {
+  /* Improve positioning performance */
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+/* Prevent layout thrashing in appointment tables */
+.appointment-table-wrapper {
+  /* Enable GPU acceleration for smooth scrolling */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+.appointment-table-wrapper .ant-table {
+  /* Optimize table rendering */
+  contain: layout style;
+}
+
+/* Smooth transitions for appointment status changes */
+.appointment-status-transition {
+  transition: all 0.3s ease-in-out;
+}
+
+/* Optimize card animations */
+.ant-card {
+  /* Enable GPU acceleration */
+  transform: translateZ(0);
+}
+
+/* Fix for appointment action buttons */
+.appointment-actions {
+  /* Prevent layout shift during button state changes */
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* Optimize appointment cancellation modal */
+.appointment-cancel-modal .ant-modal-content {
+  /* Improve modal performance */
+  will-change: transform, opacity;
+}
+
+/* Hide any error overlays that might appear */
+[class*="error-overlay"],
+[id*="error-overlay"],
+.error-overlay {
+  display: none !important;
+}
+
+/* Performance improvements for large tables */
+.large-table-optimization {
+  /* Virtual scrolling preparation */
+  overflow: auto;
+  height: 400px;
+}
+
+.large-table-optimization .ant-table-body {
+  /* Optimize scrolling */
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Webkit scrollbar styling */
+.large-table-optimization .ant-table-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.large-table-optimization .ant-table-body::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.large-table-optimization .ant-table-body::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.large-table-optimization .ant-table-body::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Additional error suppression */
+.react-error-overlay,
+#react-error-overlay,
+.__react-error-overlay__ {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
 } 

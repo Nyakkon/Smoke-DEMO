@@ -63,6 +63,11 @@ router.post('/login', async (req, res) => {
             { expiresIn: process.env.JWT_EXPIRE || '8h' }
         );
 
+        console.log('🔑 Coach login debug:');
+        console.log('   User from DB:', user);
+        console.log('   Token payload:', { id: user.UserID, email: user.Email, role: user.Role });
+        console.log('   Generated token:', token.substring(0, 20) + '...');
+
         // Update last login
         await pool.request()
             .input('UserID', user.UserID)
@@ -509,10 +514,17 @@ router.put('/profile-test', protect, authorize('coach'), async (req, res) => {
 // Get all members/users for coach dashboard
 router.get('/members', protect, authorize('coach'), async (req, res) => {
     try {
-        // Get all users with their basic info and membership status
+        const coachId = req.user.id; // Get current coach ID from auth middleware
+
+        console.log('🔍 Coach /members endpoint debug:');
+        console.log('   req.user:', req.user);
+        console.log('   coachId:', coachId);
+
+        // Get only members assigned to this coach through QuitPlans (DISTINCT to avoid duplicates)
         const result = await pool.request()
+            .input('CoachID', coachId)
             .query(`
-                SELECT 
+                SELECT DISTINCT
                     u.UserID,
                     u.Email,
                     u.FirstName,
@@ -534,22 +546,29 @@ router.get('/members', protect, authorize('coach'), async (req, res) => {
                     mp.Price as PlanPrice,
                     mp.Duration as PlanDuration,
                     DATEDIFF(day, GETDATE(), um.EndDate) as DaysRemaining,
-                    qp.PlanID as QuitPlanID,
-                    qp.StartDate as QuitStartDate,
-                    qp.TargetDate as QuitTargetDate,
-                    qp.Status as QuitPlanStatus,
-                    qp.MotivationLevel,
+                    qp_latest.PlanID as QuitPlanID,
+                    qp_latest.StartDate as QuitStartDate,
+                    qp_latest.TargetDate as QuitTargetDate,
+                    qp_latest.Status as QuitPlanStatus,
+                    qp_latest.MotivationLevel,
+                    qp_latest.CoachID,
                     pt.CigarettesSmoked,
                     pt.DaysSmokeFree,
                     pt.MoneySaved,
                     pt.CravingLevel
                 FROM Users u
+                INNER JOIN (
+                    -- Get latest QuitPlan for each user assigned to this coach
+                    SELECT qp.*,
+                           ROW_NUMBER() OVER (PARTITION BY qp.UserID ORDER BY qp.CreatedAt DESC) as rn
+                    FROM QuitPlans qp
+                    WHERE qp.CoachID = @CoachID
+                        AND qp.Status = 'active'
+                ) qp_latest ON u.UserID = qp_latest.UserID AND qp_latest.rn = 1
                 LEFT JOIN UserMemberships um ON u.UserID = um.UserID 
                     AND um.Status = 'active' 
                     AND um.EndDate > GETDATE()
                 LEFT JOIN MembershipPlans mp ON um.PlanID = mp.PlanID
-                LEFT JOIN QuitPlans qp ON u.UserID = qp.UserID 
-                    AND qp.Status = 'active'
                 LEFT JOIN (
                     SELECT UserID, 
                            CigarettesSmoked, 
@@ -559,19 +578,27 @@ router.get('/members', protect, authorize('coach'), async (req, res) => {
                            ROW_NUMBER() OVER (PARTITION BY UserID ORDER BY Date DESC) as rn
                     FROM ProgressTracking
                 ) pt ON u.UserID = pt.UserID AND pt.rn = 1
-                WHERE u.Role IN ('guest', 'member')
+                WHERE u.Role IN ('guest', 'member') 
+                    AND u.IsActive = 1
                 ORDER BY u.CreatedAt DESC
             `);
 
-        // Get achievement counts for each user
+        console.log('   SQL result count:', result.recordset.length);
+        console.log('   SQL result:', result.recordset);
+
+        // Get achievement counts for assigned members only
         const achievementCounts = await pool.request()
+            .input('CoachID', coachId)
             .query(`
                 SELECT 
                     ua.UserID,
                     COUNT(*) as AchievementCount
                 FROM UserAchievements ua
-                JOIN Users u ON ua.UserID = u.UserID
-                WHERE u.Role IN ('guest', 'member')
+                WHERE ua.UserID IN (
+                    SELECT DISTINCT qp.UserID 
+                    FROM QuitPlans qp 
+                    WHERE qp.CoachID = @CoachID AND qp.Status = 'active'
+                )
                 GROUP BY ua.UserID
             `);
 
@@ -612,7 +639,8 @@ router.get('/members', protect, authorize('coach'), async (req, res) => {
                 startDate: user.QuitStartDate,
                 targetDate: user.QuitTargetDate,
                 status: user.QuitPlanStatus,
-                motivationLevel: user.MotivationLevel
+                motivationLevel: user.MotivationLevel,
+                coachId: user.CoachID
             } : null,
             progress: {
                 cigarettesSmoked: user.CigarettesSmoked || 0,
@@ -624,18 +652,22 @@ router.get('/members', protect, authorize('coach'), async (req, res) => {
             isSubscribed: user.MembershipID !== null
         }));
 
+        console.log('   Final members count:', members.length);
+
         res.json({
             success: true,
             data: members,
             total: members.length,
-            message: 'Đã lấy danh sách members thành công'
+            message: members.length > 0
+                ? `Đã lấy danh sách ${members.length} members được phân công thành công`
+                : 'Chưa có members nào được phân công cho bạn'
         });
 
     } catch (error) {
-        console.error('Error getting members:', error);
+        console.error('Error getting assigned members:', error);
         res.status(500).json({
             success: false,
-            message: 'Lỗi khi lấy danh sách members',
+            message: 'Lỗi khi lấy danh sách members được phân công',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
@@ -644,41 +676,57 @@ router.get('/members', protect, authorize('coach'), async (req, res) => {
 // Get member statistics for dashboard
 router.get('/stats', protect, authorize('coach'), async (req, res) => {
     try {
-        // Get basic statistics
+        const coachId = req.user.id; // Get current coach ID from auth middleware
+
+        // Get statistics only for members assigned to this coach
         const totalMembersResult = await pool.request()
+            .input('CoachID', coachId)
             .query(`
-                SELECT COUNT(*) as TotalMembers
-                FROM Users 
-                WHERE Role IN ('guest', 'member')
+                SELECT COUNT(DISTINCT u.UserID) as TotalMembers
+                FROM Users u
+                INNER JOIN QuitPlans qp ON u.UserID = qp.UserID
+                WHERE u.Role IN ('guest', 'member')
+                    AND qp.CoachID = @CoachID
+                    AND qp.Status = 'active'
+                    AND u.IsActive = 1
             `);
 
         const activeMembersResult = await pool.request()
+            .input('CoachID', coachId)
             .query(`
-                SELECT COUNT(*) as ActiveMembers
+                SELECT COUNT(DISTINCT u.UserID) as ActiveMembers
                 FROM Users u
-                JOIN UserMemberships um ON u.UserID = um.UserID
+                INNER JOIN QuitPlans qp ON u.UserID = qp.UserID
+                INNER JOIN UserMemberships um ON u.UserID = um.UserID
                 WHERE u.Role IN ('guest', 'member')
-                AND um.Status = 'active'
-                AND um.EndDate > GETDATE()
+                    AND qp.CoachID = @CoachID
+                    AND qp.Status = 'active'
+                    AND um.Status = 'active'
+                    AND um.EndDate > GETDATE()
+                    AND u.IsActive = 1
             `);
 
         const completedPlansResult = await pool.request()
+            .input('CoachID', coachId)
             .query(`
                 SELECT COUNT(*) as CompletedPlans
                 FROM QuitPlans qp
                 JOIN Users u ON qp.UserID = u.UserID
                 WHERE u.Role IN ('guest', 'member')
-                AND qp.Status = 'completed'
+                    AND qp.CoachID = @CoachID
+                    AND qp.Status = 'completed'
             `);
 
-        // Calculate success rate
+        // Calculate success rate based on coach's plans
         const totalPlansResult = await pool.request()
+            .input('CoachID', coachId)
             .query(`
                 SELECT COUNT(*) as TotalPlans
                 FROM QuitPlans qp
                 JOIN Users u ON qp.UserID = u.UserID
                 WHERE u.Role IN ('guest', 'member')
-                AND qp.Status IN ('active', 'completed', 'cancelled')
+                    AND qp.CoachID = @CoachID
+                    AND qp.Status IN ('active', 'completed', 'cancelled')
             `);
 
         const totalMembers = totalMembersResult.recordset[0].TotalMembers;
@@ -696,14 +744,16 @@ router.get('/stats', protect, authorize('coach'), async (req, res) => {
                 completedPlans,
                 successRate
             },
-            message: 'Đã lấy thống kê thành công'
+            message: totalMembers > 0
+                ? 'Đã lấy thống kê thành công'
+                : 'Chưa có members nào được phân công cho bạn'
         });
 
     } catch (error) {
-        console.error('Error getting stats:', error);
+        console.error('Error getting coach stats:', error);
         res.status(500).json({
             success: false,
-            message: 'Lỗi khi lấy thống kê',
+            message: 'Lỗi khi lấy thống kê coach',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
@@ -713,12 +763,35 @@ router.get('/stats', protect, authorize('coach'), async (req, res) => {
 router.get('/members/:id/details', protect, authorize('coach'), async (req, res) => {
     try {
         const memberId = req.params.id;
+        const coachId = req.user.id; // Get current coach ID from auth middleware
 
         // Validate member ID
         if (!memberId || isNaN(memberId)) {
             return res.status(400).json({
                 success: false,
                 message: 'ID thành viên không hợp lệ'
+            });
+        }
+
+        // First check if this member is assigned to the current coach
+        const assignmentCheck = await pool.request()
+            .input('UserID', memberId)
+            .input('CoachID', coachId)
+            .query(`
+                SELECT qp.PlanID, qp.CoachID
+                FROM QuitPlans qp
+                JOIN Users u ON qp.UserID = u.UserID
+                WHERE qp.UserID = @UserID 
+                    AND qp.CoachID = @CoachID 
+                    AND qp.Status = 'active'
+                    AND u.Role IN ('guest', 'member')
+                    AND u.IsActive = 1
+            `);
+
+        if (assignmentCheck.recordset.length === 0) {
+            return res.status(403).json({
+                success: false,
+                message: 'Bạn không có quyền xem thông tin member này. Member chưa được phân công cho bạn.'
             });
         }
 

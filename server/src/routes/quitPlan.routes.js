@@ -118,7 +118,7 @@ router.get('/', auth, requireActivated, checkPaymentConfirmationAccess, async (r
             .input('UserID', userId)
             .query(query);
 
-        // Lấy kế hoạch mẫu theo gói user đã đăng ký
+        // Lấy kế hoạch mẫu theo gói user đã đăng ký (bao gồm cả pending payments)
         const templateQuery = `
             SELECT 
                 pt.TemplateID,
@@ -130,9 +130,12 @@ router.get('/', auth, requireActivated, checkPaymentConfirmationAccess, async (r
                 mp.Description as PlanDescription
             FROM PlanTemplates pt
             JOIN MembershipPlans mp ON pt.PlanID = mp.PlanID
-            JOIN Payments p ON mp.PlanID = p.PlanID
-            JOIN PaymentConfirmations pc ON p.PaymentID = pc.PaymentID
-            WHERE p.UserID = @UserID AND p.Status = 'confirmed'
+            WHERE mp.PlanID IN (
+                SELECT DISTINCT p.PlanID 
+                FROM Payments p 
+                WHERE p.UserID = @UserID 
+                    AND p.Status IN ('confirmed', 'pending')
+            )
             ORDER BY pt.SortOrder
         `;
 
@@ -213,9 +216,7 @@ router.get('/templates/all', async (req, res) => {
     try {
         console.log('📋 Getting all plan templates...');
 
-        // Đảm bảo PlanTemplates table tồn tại
-        await ensurePlanTemplatesExists();
-
+        // Direct query without ensurePlanTemplatesExists which might be causing issues
         const query = `
             SELECT 
                 pt.TemplateID,
@@ -235,6 +236,15 @@ router.get('/templates/all', async (req, res) => {
 
         const result = await pool.request().query(query);
         console.log(`✅ Found ${result.recordset.length} templates`);
+
+        if (result.recordset.length === 0) {
+            return res.json({
+                success: true,
+                data: [],
+                totalTemplates: 0,
+                message: 'Chưa có kế hoạch mẫu nào'
+            });
+        }
 
         // Group by plan
         const groupedByPlan = result.recordset.reduce((acc, item) => {

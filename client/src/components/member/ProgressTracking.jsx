@@ -92,20 +92,62 @@ const ProgressTracking = () => {
             setLoading(true);
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
 
-            const response = await axios.get('http://localhost:4000/api/users/progress', {
+            // Load progress summary data
+            const summaryResponse = await axios.get('http://localhost:4000/api/progress/summary', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
             });
 
-            if (response.data.success) {
-                setProgressData(response.data.data || []);
+            // Load progress range data (last 30 days)
+            const rangeResponse = await axios.get('http://localhost:4000/api/progress/range', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                params: {
+                    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    endDate: new Date().toISOString().split('T')[0]
+                }
+            });
+
+            // Load streak information
+            const streakResponse = await axios.get('http://localhost:4000/api/progress/streak', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (summaryResponse.data.success) {
+                // Set summary data for stats display
+                const summaryData = summaryResponse.data.data;
+                setSmokingStatus({
+                    totalDaysTracked: summaryData.TotalDaysTracked || 0,
+                    smokeFreeDays: summaryData.SmokeFreeDays || 0,
+                    totalMoneySaved: summaryData.TotalMoneySaved || 0,
+                    averageCravingLevel: summaryData.AverageCravingLevel || 0,
+                    currentStreak: streakResponse.data.success ? streakResponse.data.data.currentStreak || 0 : 0,
+                    longestStreak: streakResponse.data.success ? streakResponse.data.data.longestStreak || 0 : 0,
+                    cigarettesNotSmoked: summaryData.CigarettesNotSmoked || 0,
+                    smokeFreePercentage: summaryData.SmokeFreePercentage || 0
+                });
             }
+
+            if (rangeResponse.data.success) {
+                // Set progress data for charts and daily tracking
+                setProgressData(rangeResponse.data.data || []);
+            }
+
         } catch (error) {
             console.error('Error loading progress data:', error);
-            message.warning('Không thể kết nối server. Hiển thị dữ liệu demo...');
 
-            // Use mock data when server is not available
+            // Only show warning if it's a specific permission error
+            if (error.response?.status === 403) {
+                message.warning('Bạn cần có gói dịch vụ được xác nhận để xem tiến trình chi tiết. Hiển thị dữ liệu demo...');
+            } else {
+                message.warning('Không thể kết nối server. Hiển thị dữ liệu demo...');
+            }
+
+            // Use mock data when server is not available or access denied
             const mockData = [
                 {
                     Date: new Date().toISOString(),
@@ -127,6 +169,18 @@ const ProgressTracking = () => {
                 }
             ];
             setProgressData(mockData);
+
+            // Set mock smoking status
+            setSmokingStatus({
+                totalDaysTracked: 2,
+                smokeFreeDays: 1,
+                totalMoneySaved: 180000,
+                averageCravingLevel: 4.5,
+                currentStreak: 1,
+                longestStreak: 1,
+                cigarettesNotSmoked: 18,
+                smokeFreePercentage: 50
+            });
         } finally {
             setLoading(false);
         }
@@ -136,7 +190,7 @@ const ProgressTracking = () => {
         try {
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
 
-            const response = await axios.get('http://localhost:4000/api/achievements/earned', {
+            const response = await axios.get('http://localhost:4000/api/achievements/user', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -151,17 +205,24 @@ const ProgressTracking = () => {
             const mockAchievements = [
                 {
                     AchievementID: 1,
-                    Name: 'Ngày đầu tiên',
-                    Description: 'Chúc mừng bạn đã hoàn thành ngày đầu tiên không hút thuốc!',
-                    IconURL: '🏆',
-                    EarnedAt: new Date().toISOString()
+                    Name: 'Tiết kiệm 500K',
+                    Description: 'Tuyệt vời! Bạn đã tiết kiệm được 500,000 VNĐ!',
+                    IconURL: '💸',
+                    EarnedAt: '2025-05-28T07:58:06.477Z'
                 },
                 {
                     AchievementID: 2,
+                    Name: 'Tiết kiệm 1 triệu',
+                    Description: 'Thành tích đáng kinh ngạc! 1,000,000 VNĐ đã được tiết kiệm!',
+                    IconURL: '🏦',
+                    EarnedAt: '2025-05-28T07:58:06.480Z'
+                },
+                {
+                    AchievementID: 3,
                     Name: 'Tiết kiệm 100K',
                     Description: 'Bạn đã tiết kiệm được 100,000 VNĐ nhờ việc không hút thuốc!',
                     IconURL: '💰',
-                    EarnedAt: new Date(Date.now() - 86400000).toISOString()
+                    EarnedAt: '2025-05-28T07:58:06.480Z'
                 }
             ];
             setAchievements(mockAchievements);
@@ -236,13 +297,10 @@ const ProgressTracking = () => {
                 date: values.date.format('YYYY-MM-DD'),
                 cigarettesSmoked: values.cigarettesSmoked || 0,
                 cravingLevel: values.cravingLevel || 1,
-                emotionNotes: values.emotionNotes || '',
-                healthNotes: values.healthNotes || '',
-                moneySaved: calculateMoneySaved(values.cigarettesSmoked || 0),
-                daysSmokeFree: calculateDaysSmokeFree(values.cigarettesSmoked || 0)
+                emotionNotes: values.emotionNotes || ''
             };
 
-            const response = await axios.post('http://localhost:4000/api/users/progress', progressEntry, {
+            const response = await axios.post('http://localhost:4000/api/progress', progressEntry, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -251,6 +309,14 @@ const ProgressTracking = () => {
 
             if (response.data.success) {
                 message.success('Đã thêm dữ liệu tiến trình thành công!');
+
+                // Show achievement notifications if any
+                if (response.data.achievements?.newAchievements?.length > 0) {
+                    response.data.achievements.newAchievements.forEach(achievement => {
+                        message.success(`🏆 Chúc mừng! Bạn đã đạt thành tích: ${achievement.Name}`, 5);
+                    });
+                }
+
                 setIsAddModalVisible(false);
                 addForm.resetFields();
                 loadProgressData();
@@ -260,6 +326,12 @@ const ProgressTracking = () => {
             }
         } catch (error) {
             console.error('Error adding progress:', error);
+
+            if (error.response?.status === 403) {
+                message.error('Bạn cần có gói dịch vụ được xác nhận để ghi nhận tiến trình');
+                return;
+            }
+
             message.warning('Không thể kết nối server. Dữ liệu sẽ được lưu tạm thời...');
 
             // Add to local state when server is not available
@@ -268,7 +340,6 @@ const ProgressTracking = () => {
                 CigarettesSmoked: values.cigarettesSmoked || 0,
                 CravingLevel: values.cravingLevel || 1,
                 EmotionNotes: values.emotionNotes || '',
-                HealthNotes: values.healthNotes || '',
                 MoneySaved: calculateMoneySaved(values.cigarettesSmoked || 0),
                 DaysSmokeFree: calculateDaysSmokeFree(values.cigarettesSmoked || 0),
                 CreatedAt: new Date().toISOString()
@@ -281,12 +352,14 @@ const ProgressTracking = () => {
     };
 
     const calculateMoneySaved = (cigarettesSmoked) => {
-        // Use default values if smoking status is not available
-        const cigarettePrice = smokingStatus?.CigarettePrice || smokingStatus?.cigarettePrice || 5000; // Default 5000 VND per cigarette
-        const cigarettesPerDay = smokingStatus?.CigarettesPerDay || smokingStatus?.cigarettesPerDay || 20; // Default 20 cigarettes per day
+        // Use standard values based on Vietnamese market
+        // Standard: 1 pack = 20 cigarettes = 30,000 VNĐ → 1 cigarette = 1,500 VNĐ
+        // Baseline: Average person smokes at least half pack per day = 10 cigarettes
+        const standardCigarettePrice = smokingStatus?.CigarettePrice || smokingStatus?.cigarettePrice || 1500;
+        const baselineCigarettesPerDay = smokingStatus?.CigarettesPerDay || smokingStatus?.cigarettesPerDay || 10;
 
-        const dailyBudget = cigarettesPerDay * cigarettePrice;
-        const actualSpent = cigarettesSmoked * cigarettePrice;
+        const dailyBudget = baselineCigarettesPerDay * standardCigarettePrice;
+        const actualSpent = cigarettesSmoked * standardCigarettePrice;
         return Math.max(0, dailyBudget - actualSpent);
     };
 
@@ -307,13 +380,31 @@ const ProgressTracking = () => {
     };
 
     const getProgressStats = () => {
+        // Use smokingStatus data if available (from API summary)
+        if (smokingStatus) {
+            return {
+                totalDays: smokingStatus.totalDaysTracked || 0,
+                smokFreeDays: smokingStatus.smokeFreeDays || 0,
+                totalMoneySaved: smokingStatus.totalMoneySaved || 0,
+                averageCraving: smokingStatus.averageCravingLevel || 0,
+                currentStreak: smokingStatus.currentStreak || 0,
+                longestStreak: smokingStatus.longestStreak || 0,
+                cigarettesNotSmoked: smokingStatus.cigarettesNotSmoked || 0,
+                smokeFreePercentage: smokingStatus.smokeFreePercentage || 0
+            };
+        }
+
+        // Fallback to calculating from progressData if smokingStatus is not available
         if (!progressData.length) {
             return {
                 totalDays: 0,
                 smokFreeDays: 0,
                 totalMoneySaved: 0,
                 averageCraving: 0,
-                currentStreak: 0
+                currentStreak: 0,
+                longestStreak: 0,
+                cigarettesNotSmoked: 0,
+                smokeFreePercentage: 0
             };
         }
 
@@ -337,7 +428,10 @@ const ProgressTracking = () => {
             smokFreeDays,
             totalMoneySaved,
             averageCraving: Math.round(averageCraving * 10) / 10,
-            currentStreak
+            currentStreak,
+            longestStreak: currentStreak, // Simple approximation
+            cigarettesNotSmoked: 0, // Would need baseline data to calculate
+            smokeFreePercentage: totalDays > 0 ? (smokFreeDays / totalDays * 100) : 0
         };
     };
 
@@ -816,16 +910,6 @@ const ProgressTracking = () => {
                         <TextArea
                             placeholder="Ví dụ: Hôm nay tôi cảm thấy khó khăn vì stress công việc..."
                             rows={3}
-                        />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="healthNotes"
-                        label="Ghi chú sức khỏe"
-                    >
-                        <TextArea
-                            placeholder="Ví dụ: Hơi thở tươi hơn, ngủ ngon hơn..."
-                            rows={2}
                         />
                     </Form.Item>
 

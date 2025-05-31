@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Layout,
     Card,
@@ -62,6 +62,7 @@ import axios from 'axios';
 import MemberDetailsModal from '../components/MemberDetailsModal';
 import MemberProgressTracking from '../components/MemberProgressTracking';
 import { CoachChat } from '../components/chat';
+import CoachChatSimple from '../components/chat/CoachChatSimple';
 import AppointmentCalendar from '../components/coach/AppointmentCalendar';
 import CoachFeedbackView from '../components/coach/CoachFeedbackView';
 
@@ -93,6 +94,10 @@ const CoachDashboard = () => {
 
     // Progress tracking state
     const [selectedMemberForProgress, setSelectedMemberForProgress] = useState(null);
+
+    // Add render counter for debugging
+    const renderCount = useRef(0);
+    renderCount.current += 1;
 
     const navigate = useNavigate();
 
@@ -140,7 +145,7 @@ const CoachDashboard = () => {
         }
     };
 
-    const loadCoachProfile = async (token) => {
+    const loadCoachProfile = useCallback(async (token) => {
         try {
             const response = await axios.get('http://localhost:4000/api/coach/profile', {
                 headers: {
@@ -158,10 +163,12 @@ const CoachDashboard = () => {
                 handleLogout();
             }
         }
-    };
+    }, []);
 
-    const loadMembers = async (token) => {
+    const loadMembers = useCallback(async (token) => {
         try {
+            console.log(`CoachDashboard render #${renderCount.current} - Loading members...`);
+
             const response = await axios.get('http://localhost:4000/api/coach/members', {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -170,15 +177,32 @@ const CoachDashboard = () => {
             });
 
             if (response.data.success) {
-                setMembers(response.data.data);
+                const membersData = response.data.data;
+
+                // Log for debugging
+                console.log('Raw members data from coach API:', membersData);
+
+                // Deduplicate by id to ensure unique members
+                const uniqueMembers = membersData.reduce((acc, member) => {
+                    const isDuplicate = acc.some(existing => existing.id === member.id);
+                    if (!isDuplicate) {
+                        acc.push(member);
+                    } else {
+                        console.warn('Duplicate member found and removed in CoachDashboard:', member);
+                    }
+                    return acc;
+                }, []);
+
+                console.log('Unique members after deduplication in CoachDashboard:', uniqueMembers);
+                setMembers(uniqueMembers);
             }
         } catch (error) {
             console.error('Error loading members:', error);
             message.error('Lỗi khi tải danh sách thành viên');
         }
-    };
+    }, []);
 
-    const loadStats = async (token) => {
+    const loadStats = useCallback(async (token) => {
         try {
             const response = await axios.get('http://localhost:4000/api/coach/stats', {
                 headers: {
@@ -194,7 +218,22 @@ const CoachDashboard = () => {
             console.error('Error loading stats:', error);
             message.error('Lỗi khi tải thống kê');
         }
-    };
+    }, []);
+
+    // Memoize the members data to prevent unnecessary re-renders
+    const memoizedMembers = useMemo(() => {
+        console.log('Memoizing members in CoachDashboard, current count:', members.length);
+        // Double-check for unique members by id
+        const uniqueMembers = members.reduce((acc, member) => {
+            const existing = acc.find(m => m.id === member.id);
+            if (!existing) {
+                acc.push(member);
+            }
+            return acc;
+        }, []);
+        console.log('Final unique members count in CoachDashboard:', uniqueMembers.length);
+        return uniqueMembers;
+    }, [members]);
 
     // Load member details
     const loadMemberDetails = async (memberId) => {
@@ -329,11 +368,6 @@ const CoachDashboard = () => {
             onClick: () => setActiveTab('profile'),
         },
         {
-            key: 'settings',
-            icon: <SettingOutlined />,
-            label: 'Cài đặt',
-        },
-        {
             type: 'divider',
         },
         {
@@ -358,7 +392,7 @@ const CoachDashboard = () => {
         {
             key: 'members',
             icon: <TeamOutlined />,
-            label: 'Thành viên',
+            label: 'Thành viên được phân công',
         },
         {
             key: 'progress',
@@ -469,7 +503,7 @@ const CoachDashboard = () => {
                 <Col xs={24} sm={12} lg={6}>
                     <Card className="text-center shadow-md hover:shadow-lg transition-shadow">
                         <Statistic
-                            title="Tổng thành viên"
+                            title="Thành viên được phân công"
                             value={stats.totalMembers}
                             prefix={<TeamOutlined className="text-blue-500" />}
                             valueStyle={{ color: '#1890ff' }}
@@ -525,7 +559,7 @@ const CoachDashboard = () => {
                                 <Col xs={24} sm={12} md={6}>
                                     <div className="text-center">
                                         <TeamOutlined className="text-2xl mb-2" />
-                                        <div>Quản lý thành viên</div>
+                                        <div>Quản lý thành viên được phân công</div>
                                     </div>
                                 </Col>
                                 <Col xs={24} sm={12} md={6}>
@@ -884,19 +918,36 @@ const CoachDashboard = () => {
     );
 
     const renderMembers = () => (
-        <Card title="Danh sách thành viên" className="shadow-md">
-            <Table
-                columns={memberColumns}
-                dataSource={members}
-                rowKey="id"
-                pagination={{
-                    pageSize: 10,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} thành viên`,
-                }}
-                scroll={{ x: 800 }}
-            />
+        <Card title="Danh sách thành viên được phân công" className="shadow-md">
+            {memoizedMembers.length > 0 ? (
+                <Table
+                    columns={memberColumns}
+                    dataSource={memoizedMembers}
+                    rowKey="id"
+                    pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showQuickJumper: true,
+                        showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} thành viên`,
+                    }}
+                    scroll={{ x: 800 }}
+                />
+            ) : (
+                <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={
+                        <div className="text-center">
+                            <Text className="text-lg text-gray-600 mb-2 block">
+                                Chưa có thành viên nào được phân công
+                            </Text>
+                            <Text className="text-gray-500">
+                                Admin sẽ phân công thành viên cho bạn khi có yêu cầu hỗ trợ
+                            </Text>
+                        </div>
+                    }
+                    className="py-12"
+                />
+            )}
         </Card>
     );
 
@@ -911,14 +962,14 @@ const CoachDashboard = () => {
         }
 
         return (
-            <Card title="Theo dõi tiến trình thành viên" className="shadow-md">
+            <Card title="Theo dõi tiến trình thành viên được phân công" className="shadow-md">
                 <div className="mb-4">
                     <Text className="text-gray-600">
-                        Chọn một thành viên để xem tiến trình chi tiết của họ
+                        Chọn một thành viên được phân công để xem tiến trình chi tiết của họ
                     </Text>
                 </div>
 
-                {members.length > 0 ? (
+                {memoizedMembers.length > 0 ? (
                     <Table
                         columns={[
                             {
@@ -964,7 +1015,7 @@ const CoachDashboard = () => {
                                 ),
                             },
                         ]}
-                        dataSource={members}
+                        dataSource={memoizedMembers}
                         rowKey="id"
                         pagination={{
                             pageSize: 8,
@@ -975,8 +1026,18 @@ const CoachDashboard = () => {
                     />
                 ) : (
                     <Empty
-                        description="Chưa có thành viên nào"
-                        className="py-10"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={
+                            <div className="text-center">
+                                <Text className="text-lg text-gray-600 mb-2 block">
+                                    Chưa có thành viên nào để theo dõi
+                                </Text>
+                                <Text className="text-gray-500">
+                                    Bạn cần được admin phân công thành viên trước khi có thể theo dõi tiến trình
+                                </Text>
+                            </div>
+                        }
+                        className="py-12"
                     />
                 )}
             </Card>
@@ -1015,7 +1076,7 @@ const CoachDashboard = () => {
             case 'profile':
                 return 'Thông tin cá nhân';
             case 'members':
-                return 'Quản lý thành viên';
+                return 'Thành viên được phân công';
             case 'progress':
                 return 'Theo dõi tiến trình';
             case 'chat':
@@ -1036,13 +1097,13 @@ const CoachDashboard = () => {
             case 'profile':
                 return 'Xem và chỉnh sửa thông tin cá nhân, hồ sơ chuyên môn của bạn.';
             case 'members':
-                return 'Quản lý và theo dõi tất cả thành viên trong hệ thống.';
+                return 'Quản lý và theo dõi các thành viên được admin phân công cho bạn. Chỉ những thành viên được phân công mới xuất hiện trong danh sách này.';
             case 'progress':
-                return 'Theo dõi tiến trình cai thuốc của các thành viên.';
+                return 'Theo dõi tiến trình cai thuốc của các thành viên được phân công cho bạn.';
             case 'chat':
-                return 'Chat với các thành viên trong hệ thống.';
+                return 'Chat với các thành viên được phân công cho bạn.';
             case 'appointments':
-                return 'Quản lý lịch hẹn tư vấn với các thành viên. Tạo, xem và theo dõi các cuộc hẹn.';
+                return 'Quản lý lịch hẹn tư vấn với các thành viên được phân công. Tạo, xem và theo dõi các cuộc hẹn.';
             case 'feedback':
                 return 'Xem và quản lý tất cả đánh giá từ các thành viên đã tư vấn. Theo dõi thống kê và cải thiện chất lượng dịch vụ.';
             default:

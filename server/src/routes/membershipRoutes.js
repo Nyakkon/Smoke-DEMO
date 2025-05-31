@@ -51,6 +51,22 @@ router.post('/purchase', auth, async (req, res) => {
     }
 
     try {
+        // Check if user already has pending payments
+        const existingPendingResult = await pool.request()
+            .input('userId', userId)
+            .query(`
+                SELECT COUNT(*) as pendingCount
+                FROM Payments
+                WHERE UserID = @userId AND Status = 'pending'
+            `);
+
+        if (existingPendingResult.recordset[0].pendingCount > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bạn đã có thanh toán đang chờ xác nhận. Vui lòng chờ admin xử lý trước khi đặt mua gói mới.'
+            });
+        }
+
         // Start a transaction
         const transaction = await pool.transaction();
         await transaction.begin();
@@ -102,7 +118,7 @@ router.post('/purchase', auth, async (req, res) => {
                 .input('planId', planId)
                 .input('amount', plan.Price)
                 .input('paymentMethod', paymentMethod)
-                .input('status', 'confirmed')
+                .input('status', 'pending')
                 .input('transactionId', transactionId)
                 .input('startDate', startDate)
                 .input('endDate', endDate)
@@ -123,7 +139,7 @@ router.post('/purchase', auth, async (req, res) => {
 
             console.log('Payment created with ID:', paymentId);
 
-            // Add user membership
+            // Create membership record with PENDING status (not active)
             const membershipResult = await transaction.request()
                 .input('userId', userId)
                 .input('planId', planId)
@@ -132,68 +148,28 @@ router.post('/purchase', auth, async (req, res) => {
                 .query(`
                     INSERT INTO UserMemberships (UserID, PlanID, StartDate, EndDate, Status)
                     OUTPUT INSERTED.MembershipID
-                    VALUES (@userId, @planId, @startDate, @endDate, 'active')
+                    VALUES (@userId, @planId, @startDate, @endDate, 'pending')
                 `);
 
             const membershipId = membershipResult.recordset[0].MembershipID;
 
-            console.log('Membership created with ID:', membershipId);
+            console.log('Membership created with ID (pending status):', membershipId);
 
-            // Generate confirmation code
-            const confirmationCode = 'CONF' + Date.now() + crypto.randomBytes(4).toString('hex').toUpperCase();
+            // DO NOT create payment confirmation record automatically
+            // Admin will create this when they confirm the payment
 
-            // Debug: Check PaymentConfirmations table structure
-            const tableSchemaResult = await transaction.request()
-                .query(`
-                    SELECT COLUMN_NAME, DATA_TYPE 
-                    FROM INFORMATION_SCHEMA.COLUMNS 
-                    WHERE TABLE_NAME = 'PaymentConfirmations'
-                `);
-
-            console.log('PaymentConfirmations table columns:', tableSchemaResult.recordset);
-
-            // Create payment confirmation record according to the schema.sql structure
-            await transaction.request()
-                .input('paymentId', paymentId)
-                .input('confirmationDate', new Date())
-                .input('confirmedByUserId', userId)  // Sử dụng chính userId làm người xác nhận
-                .input('confirmationCode', confirmationCode)
-                .input('notes', `Thanh toán tự động cho gói ${plan.Name}`)
-                .query(`
-                    INSERT INTO PaymentConfirmations (
-                        PaymentID, ConfirmationDate, ConfirmedByUserID,
-                        ConfirmationCode, Notes
-                    )
-                    VALUES (
-                        @paymentId, @confirmationDate, @confirmedByUserId,
-                        @confirmationCode, @notes
-                    )
-                `);
-
-            console.log('Payment confirmation created with code:', confirmationCode);
-
-            // Update user role to member if they were a guest
-            if (user.Role === 'guest') {
-                await transaction.request()
-                    .input('userId', userId)
-                    .query(`
-                        UPDATE Users 
-                        SET Role = 'member', UpdatedAt = GETDATE()
-                        WHERE UserID = @userId
-                    `);
-                console.log(`Updated user ${userId} role from guest to member`);
-            }
+            // DO NOT update user role automatically
+            // This will happen when admin confirms the payment
 
             await transaction.commit();
-            console.log('Transaction committed successfully');
+            console.log('Transaction committed successfully - payment submitted for admin approval');
 
             res.json({
                 success: true,
-                message: 'Membership purchased successfully',
+                message: 'Payment submitted and pending admin confirmation',
                 plan: plan.Name,
                 validUntil: endDate,
                 transactionId: transactionId,
-                confirmationCode: confirmationCode,
                 data: {
                     membershipDetails: {
                         id: membershipId,
@@ -201,13 +177,13 @@ router.post('/purchase', auth, async (req, res) => {
                         planName: plan.Name,
                         startDate: startDate,
                         endDate: endDate,
-                        status: 'active'
+                        status: 'pending'
                     },
                     paymentDetails: {
                         id: paymentId,
                         amount: plan.Price,
                         method: paymentMethod,
-                        status: 'confirmed'
+                        status: 'pending'
                     }
                 }
             });

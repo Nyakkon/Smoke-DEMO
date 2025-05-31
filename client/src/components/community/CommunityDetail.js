@@ -47,6 +47,7 @@ const CommunityDetail = () => {
     const [commentText, setCommentText] = useState('');
     const [submittingComment, setSubmittingComment] = useState(false);
     const [liked, setLiked] = useState(false);
+    const [deletingPost, setDeletingPost] = useState(false);
 
     useEffect(() => {
         if (postId) {
@@ -140,8 +141,46 @@ const CommunityDetail = () => {
         }
     };
 
+    const handleDeletePost = async () => {
+        if (!user) {
+            message.error('Bạn cần đăng nhập để thực hiện thao tác này');
+            return;
+        }
+
+        setDeletingPost(true);
+        try {
+            const response = await axios.delete(`/api/community/posts/${postId}`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+
+            if (response.data.success) {
+                message.success('Đã xóa bài viết thành công!');
+                navigate('/community'); // Redirect to community list
+            }
+        } catch (error) {
+            console.error('Error deleting post:', error);
+            if (error.response?.status === 404) {
+                message.error('Bài viết không tồn tại hoặc bạn không có quyền xóa');
+            } else if (error.response?.status === 403) {
+                message.error('Bạn không có quyền xóa bài viết này');
+            } else {
+                message.error('Lỗi khi xóa bài viết: ' + (error.response?.data?.message || error.message));
+            }
+        } finally {
+            setDeletingPost(false);
+        }
+    };
+
     const canEditOrDelete = (item) => {
-        return user && (user.UserID === item.UserID || user.role === 'admin');
+        console.log('Debug canEditOrDelete:', {
+            user: user,
+            userID: user?.id,
+            userIDField: user?.UserID,
+            itemUserID: item?.UserID,
+            userRole: user?.role,
+            canEdit: user && (user.id === item.UserID || user.role === 'admin')
+        });
+        return user && (user.id === item.UserID || user.role === 'admin');
     };
 
     if (loading) {
@@ -194,30 +233,44 @@ const CommunityDetail = () => {
                             </div>
                         </div>
 
+                        {/* Debug info - remove this later */}
+                        {console.log('Post data:', post)}
+                        {console.log('User data:', user)}
+
                         {canEditOrDelete(post) && (
                             <Space>
-                                <Button
-                                    type="text"
-                                    icon={<EditOutlined />}
-                                    size="small"
-                                >
-                                    Sửa
-                                </Button>
                                 <Popconfirm
-                                    title="Bạn có chắc muốn xóa bài viết này?"
-                                    onConfirm={() => {/* Handle delete post */ }}
-                                    okText="Xóa"
+                                    title="Xóa bài viết"
+                                    description="Bạn có chắc muốn xóa bài viết này? Tất cả bình luận liên quan cũng sẽ bị xóa."
+                                    onConfirm={handleDeletePost}
+                                    okText={deletingPost ? "Đang xóa..." : "Xóa"}
                                     cancelText="Hủy"
+                                    okButtonProps={{
+                                        danger: true,
+                                        loading: deletingPost
+                                    }}
+                                    disabled={deletingPost}
                                 >
                                     <Button
                                         type="text"
                                         danger
                                         icon={<DeleteOutlined />}
                                         size="small"
+                                        loading={deletingPost}
+                                        disabled={deletingPost}
                                     >
-                                        Xóa
+                                        {deletingPost ? 'Đang xóa...' : 'Xóa'}
                                     </Button>
                                 </Popconfirm>
+                            </Space>
+                        )}
+
+                        {/* Temporary debug - always show buttons for testing */}
+                        {!canEditOrDelete(post) && user && (
+                            <Space>
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                    Debug: No edit/delete permission - UserID: {user.UserID} vs PostUserID: {post.UserID}
+                                </Text>
                             </Space>
                         )}
                     </div>

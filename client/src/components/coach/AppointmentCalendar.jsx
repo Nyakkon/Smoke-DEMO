@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Card,
     Calendar,
@@ -42,7 +42,7 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 
-const AppointmentCalendar = () => {
+const AppointmentCalendar = React.memo(() => {
     const [appointments, setAppointments] = useState([]);
     const [loading, setLoading] = useState(false);
     const [selectedDate, setSelectedDate] = useState(dayjs());
@@ -58,14 +58,20 @@ const AppointmentCalendar = () => {
         cancelled: 0
     });
 
+    // Add render counter for debugging
+    const renderCount = useRef(0);
+    renderCount.current += 1;
+
     useEffect(() => {
         loadAppointments();
         loadMembers();
     }, []);
 
-    const loadAppointments = async () => {
+    const loadAppointments = useCallback(async () => {
         try {
             setLoading(true);
+            console.log(`AppointmentCalendar render #${renderCount.current} - Loading appointments...`);
+
             const token = localStorage.getItem('coachToken');
 
             const response = await axios.get('http://localhost:4000/api/coach/appointments', {
@@ -78,8 +84,25 @@ const AppointmentCalendar = () => {
             });
 
             if (response.data.success) {
-                setAppointments(response.data.data);
-                calculateStats(response.data.data);
+                const appointmentsData = response.data.data;
+
+                // Log for debugging
+                console.log('Raw appointments data from API:', appointmentsData);
+
+                // Deduplicate by id to ensure unique appointments
+                const uniqueAppointments = appointmentsData.reduce((acc, appointment) => {
+                    const isDuplicate = acc.some(existing => existing.id === appointment.id);
+                    if (!isDuplicate) {
+                        acc.push(appointment);
+                    } else {
+                        console.warn('Duplicate appointment found and removed:', appointment);
+                    }
+                    return acc;
+                }, []);
+
+                console.log('Unique appointments after deduplication:', uniqueAppointments);
+                setAppointments(uniqueAppointments);
+                calculateStats(uniqueAppointments);
             }
         } catch (error) {
             console.error('Error loading appointments:', error);
@@ -87,9 +110,9 @@ const AppointmentCalendar = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const loadMembers = async () => {
+    const loadMembers = useCallback(async () => {
         try {
             const token = localStorage.getItem('coachToken');
 
@@ -100,12 +123,54 @@ const AppointmentCalendar = () => {
             });
 
             if (response.data.success) {
-                setMembers(response.data.data);
+                const membersData = response.data.data;
+
+                // Deduplicate members as well
+                const uniqueMembers = membersData.reduce((acc, member) => {
+                    const isDuplicate = acc.some(existing => existing.id === member.id);
+                    if (!isDuplicate) {
+                        acc.push(member);
+                    } else {
+                        console.warn('Duplicate member found and removed in AppointmentCalendar:', member);
+                    }
+                    return acc;
+                }, []);
+
+                setMembers(uniqueMembers);
             }
         } catch (error) {
             console.error('Error loading members:', error);
         }
-    };
+    }, []);
+
+    // Memoize the appointments data to prevent unnecessary re-renders
+    const memoizedAppointments = useMemo(() => {
+        console.log('Memoizing appointments, current count:', appointments.length);
+        // Double-check for unique appointments by id
+        const uniqueAppointments = appointments.reduce((acc, appointment) => {
+            const existing = acc.find(a => a.id === appointment.id);
+            if (!existing) {
+                acc.push(appointment);
+            }
+            return acc;
+        }, []);
+        console.log('Final unique appointments count:', uniqueAppointments.length);
+        return uniqueAppointments;
+    }, [appointments]);
+
+    // Memoize the members data
+    const memoizedMembers = useMemo(() => {
+        console.log('Memoizing members in AppointmentCalendar, current count:', members.length);
+        const uniqueMembers = members.reduce((acc, member) => {
+            const existing = acc.find(m => m.id === member.id);
+            if (!existing) {
+                acc.push(member);
+            }
+            return acc;
+        }, []);
+        console.log('Final unique members count in AppointmentCalendar:', uniqueMembers.length);
+        return uniqueMembers;
+    }, [members]);
 
     const calculateStats = (appointmentList) => {
         const stats = {
@@ -224,14 +289,14 @@ const AppointmentCalendar = () => {
         });
     };
 
-    const getAppointmentsForDate = (date) => {
+    const getAppointmentsForDate = useCallback((date) => {
         const dateStr = date.format('YYYY-MM-DD');
-        return appointments.filter(apt =>
+        return memoizedAppointments.filter(apt =>
             dayjs(apt.appointmentDate).format('YYYY-MM-DD') === dateStr
         );
-    };
+    }, [memoizedAppointments]);
 
-    const dateCellRender = (date) => {
+    const dateCellRender = useCallback((date) => {
         const dayAppointments = getAppointmentsForDate(date);
 
         if (dayAppointments.length === 0) return null;
@@ -254,7 +319,7 @@ const AppointmentCalendar = () => {
                 )}
             </div>
         );
-    };
+    }, [getAppointmentsForDate]);
 
     const getStatusColor = (status) => {
         switch (status) {
@@ -285,15 +350,18 @@ const AppointmentCalendar = () => {
         }
     };
 
-    const onDateSelect = (date) => {
+    const onDateSelect = useCallback((date) => {
         setSelectedDate(date);
         const dayAppointments = getAppointmentsForDate(date);
         if (dayAppointments.length > 0) {
             // Show appointments for selected date
         }
-    };
+    }, [getAppointmentsForDate]);
 
-    const selectedDateAppointments = getAppointmentsForDate(selectedDate);
+    // Memoize selected date appointments
+    const selectedDateAppointments = useMemo(() => {
+        return getAppointmentsForDate(selectedDate);
+    }, [getAppointmentsForDate, selectedDate]);
 
     return (
         <div className="appointment-calendar">
@@ -455,13 +523,13 @@ const AppointmentCalendar = () => {
                                     placeholder="Chọn thành viên"
                                     showSearch
                                     filterOption={(input, option) => {
-                                        const member = members.find(m => m.id === option.value);
+                                        const member = memoizedMembers.find(m => m.id === option.value);
                                         if (!member) return false;
                                         const memberText = `${member.firstName || ''} ${member.lastName || ''} ${member.email || ''}`;
                                         return memberText.toLowerCase().indexOf(input.toLowerCase()) >= 0;
                                     }}
                                 >
-                                    {members.map(member => (
+                                    {memoizedMembers.map(member => (
                                         <Option key={member.id} value={member.id}>
                                             {member.firstName} {member.lastName} - {member.email}
                                         </Option>
@@ -716,6 +784,6 @@ const AppointmentCalendar = () => {
             `}</style>
         </div>
     );
-};
+});
 
 export default AppointmentCalendar; 

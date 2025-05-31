@@ -199,7 +199,7 @@ const membershipSlice = createSlice({
             })
             .addCase(purchaseMembership.fulfilled, (state, action) => {
                 state.loading = false;
-                state.success = true;
+                // DO NOT set success = true for pending payments - only for confirmed ones
                 // Handle the membership data if it exists
                 if (action.payload && action.payload.data) {
                     if (action.payload.data.membership) {
@@ -209,23 +209,10 @@ const membershipSlice = createSlice({
                     }
                 }
 
-                // Update user role to 'member' in local storage
-                const storedUser = localStorage.getItem('user');
-                if (storedUser) {
-                    try {
-                        const user = JSON.parse(storedUser);
-                        // Only update if the user was a guest
-                        if (user.role === 'guest') {
-                            user.role = 'member';
-                            localStorage.setItem('user', JSON.stringify(user));
-                            console.log('Updated user role to "member" in local storage');
-                        }
-                    } catch (e) {
-                        console.error('Error updating user role in localStorage:', e);
-                    }
-                }
+                // DO NOT update user role for pending payments
+                // Role will only be updated when payment is confirmed by admin
 
-                console.log("Purchase successful, payload:", action.payload);
+                console.log("Purchase submitted (pending confirmation), payload:", action.payload);
             })
             .addCase(purchaseMembership.rejected, (state, action) => {
                 state.loading = false;

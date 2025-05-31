@@ -187,20 +187,6 @@ router.post('/purchase', protect, async (req, res) => {
                     VALUES (@UserID, @Title, @Message, @Type)
                 `);
 
-            // For demo purposes only:
-            // In a real system, payments would be confirmed by an admin
-            // TEMPORARY AUTO-CONFIRMATION (remove this in production)
-            if (process.env.NODE_ENV === 'development' || process.env.AUTO_CONFIRM_PAYMENTS === 'true') {
-                setTimeout(async () => {
-                    try {
-                        console.log(`[DEMO] Auto-confirming payment for user ${req.user.id}`);
-                        await confirmPayment(payment.PaymentID, req.user.id);
-                    } catch (error) {
-                        console.error('Error in auto-confirmation:', error);
-                    }
-                }, 10000); // Auto-confirm after 10 seconds in development
-            }
-
             res.status(201).json({
                 success: true,
                 data: {
@@ -365,6 +351,42 @@ router.get('/history', protect, async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error retrieving membership history'
+        });
+    }
+});
+
+// Get user payment history  
+router.get('/payment-history', protect, async (req, res) => {
+    try {
+        const result = await pool.request()
+            .input('UserID', req.user.id)
+            .query(`
+                SELECT 
+                    p.*,
+                    mp.Name as PlanName,
+                    mp.Description as PlanDescription,
+                    mp.Duration,
+                    mp.Features,
+                    um.Status as MembershipStatus,
+                    um.StartDate,
+                    um.EndDate,
+                    p.Status as PaymentStatus
+                FROM Payments p
+                JOIN MembershipPlans mp ON p.PlanID = mp.PlanID
+                LEFT JOIN UserMemberships um ON p.UserID = um.UserID AND p.PlanID = um.PlanID
+                WHERE p.UserID = @UserID
+                ORDER BY p.PaymentDate DESC
+            `);
+
+        res.json({
+            success: true,
+            data: result.recordset
+        });
+    } catch (error) {
+        console.error('Error fetching payment history:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error retrieving payment history'
         });
     }
 });

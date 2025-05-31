@@ -19,7 +19,9 @@ import {
     PhotoCamera,
     Save as SaveIcon,
     Cancel as CancelIcon,
-    Preview as PreviewIcon
+    Preview as PreviewIcon,
+    CheckCircle as CheckCircleIcon,
+    HourglassEmpty as HourglassEmptyIcon
 } from '@mui/icons-material';
 import { createBlogPost, updateBlogPost, getBlogPost, clearError, clearSuccess } from '../../store/slices/blogSlice';
 
@@ -37,6 +39,8 @@ const BlogEditor = () => {
         thumbnailURL: ''
     });
     const [showSuccess, setShowSuccess] = useState(false);
+    const [postStatus, setPostStatus] = useState(null); // Track if post is pending or published
+    const [successMessage, setSuccessMessage] = useState('');
 
     useEffect(() => {
         if (postId) {
@@ -64,7 +68,7 @@ const BlogEditor = () => {
             setShowSuccess(true);
             setTimeout(() => {
                 navigate('/blog');
-            }, 1500);
+            }, 3000); // Increased timeout to allow user to read the message
         }
     }, [success, navigate]);
 
@@ -83,13 +87,30 @@ const BlogEditor = () => {
             return;
         }
 
-        if (postId) {
-            await dispatch(updateBlogPost({
-                postId,
-                postData: { ...formData, status: 'published' }
-            }));
-        } else {
-            await dispatch(createBlogPost(formData));
+        try {
+            let result;
+            if (postId) {
+                result = await dispatch(updateBlogPost({
+                    postId,
+                    postData: { ...formData, status: 'published' }
+                }));
+                setSuccessMessage('Bài viết đã được cập nhật thành công!');
+                setPostStatus('published');
+            } else {
+                result = await dispatch(createBlogPost(formData));
+
+                // Check if the action was fulfilled and extract status/message
+                if (createBlogPost.fulfilled.match(result)) {
+                    const { status, message } = result.payload;
+                    setPostStatus(status);
+                    setSuccessMessage(message);
+                } else {
+                    setSuccessMessage('Bài viết đã được tạo thành công!');
+                    setPostStatus('published');
+                }
+            }
+        } catch (error) {
+            console.error('Error submitting blog post:', error);
         }
     };
 
@@ -278,8 +299,33 @@ const BlogEditor = () => {
                 onClose={() => setShowSuccess(false)}
                 anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
             >
-                <Alert onClose={() => setShowSuccess(false)} severity="success" sx={{ width: '100%' }}>
-                    {postId ? 'Bài viết đã được cập nhật thành công!' : 'Bài viết đã được xuất bản thành công!'}
+                <Alert
+                    onClose={() => setShowSuccess(false)}
+                    severity={postStatus === 'Pending' ? 'info' : 'success'}
+                    sx={{ width: '100%' }}
+                    icon={postStatus === 'Pending' ? <HourglassEmptyIcon /> : <CheckCircleIcon />}
+                >
+                    <Box>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                            {postStatus === 'Pending' ? '📝 Bài viết đang chờ duyệt' : '✅ Thành công!'}
+                        </Typography>
+                        <Typography variant="body2">
+                            {successMessage || (postId ? 'Bài viết đã được cập nhật thành công!' :
+                                (postStatus === 'Pending' ?
+                                    'Bài viết của bạn đã được gửi và đang chờ admin phê duyệt. Bạn sẽ nhận được thông báo khi bài viết được duyệt.' :
+                                    'Bài viết đã được xuất bản thành công!'))}
+                        </Typography>
+                        {postStatus === 'Pending' && (
+                            <Box sx={{ mt: 1, p: 1, bgcolor: 'rgba(0,0,0,0.1)', borderRadius: 1 }}>
+                                <Typography variant="caption" sx={{ display: 'block' }}>
+                                    💡 <strong>Lưu ý:</strong> Bài viết sẽ hiển thị công khai sau khi được admin phê duyệt.
+                                </Typography>
+                                <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+                                    🔔 Bạn có thể xem trạng thái bài viết trong mục "Bài viết của tôi".
+                                </Typography>
+                            </Box>
+                        )}
+                    </Box>
                 </Alert>
             </Snackbar>
         </Container>

@@ -1,363 +1,322 @@
 import React, { useState, useEffect } from 'react';
-import { StarFilled, StarOutlined, SendOutlined, UserOutlined, ClockCircleOutlined, MessageOutlined } from '@ant-design/icons';
-import './CoachFeedback.css';
+import {
+    Modal,
+    Rate,
+    Input,
+    Button,
+    Form,
+    message,
+    Card,
+    List,
+    Tag,
+    Empty,
+    Avatar,
+    Typography
+} from 'antd';
+import {
+    StarOutlined,
+    UserOutlined,
+    CheckCircleOutlined
+} from '@ant-design/icons';
+import axios from 'axios';
+import dayjs from 'dayjs';
 
-const CoachFeedback = ({ coachId, appointmentId, onClose, onSubmitSuccess }) => {
-    const [rating, setRating] = useState(0);
-    const [hoverRating, setHoverRating] = useState(0);
-    const [comment, setComment] = useState('');
-    const [categories, setCategories] = useState({
-        professionalism: 0,
-        helpfulness: 0,
-        communication: 0,
-        knowledge: 0
-    });
-    const [isAnonymous, setIsAnonymous] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [coachInfo, setCoachInfo] = useState(null);
-    const [existingFeedback, setExistingFeedback] = useState(null);
+const { TextArea } = Input;
+const { Title, Text } = Typography;
 
-    const categoryLabels = {
-        professionalism: 'Tính chuyên nghiệp',
-        helpfulness: 'Tính hữu ích',
-        communication: 'Kỹ năng giao tiếp',
-        knowledge: 'Kiến thức chuyên môn'
-    };
+const CoachFeedback = () => {
+    const [completedAppointments, setCompletedAppointments] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [feedbackModal, setFeedbackModal] = useState(false);
+    const [selectedAppointment, setSelectedAppointment] = useState(null);
+    const [submitting, setSubmitting] = useState(false);
+    const [form] = Form.useForm();
 
     useEffect(() => {
-        if (coachId) {
-            fetchCoachInfo();
-            checkExistingFeedback();
-        }
-    }, [coachId, appointmentId]);
+        loadCompletedAppointments();
+    }, []);
 
-    const fetchCoachInfo = async () => {
+    const loadCompletedAppointments = async () => {
         try {
-            const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
-            const response = await fetch(`http://localhost:4000/api/coach`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
+            setLoading(true);
+            const token = localStorage.getItem('token');
+
+            // Lấy appointments đã completed và chưa có feedback
+            const response = await axios.get('http://localhost:4000/api/chat/appointments/completed', {
+                headers: { 'Authorization': `Bearer ${token}` }
             });
 
-            if (response.ok) {
-                const data = await response.json();
-                const coach = data.data.find(c => c.UserID === parseInt(coachId));
-                setCoachInfo(coach);
+            if (response.data.success) {
+                setCompletedAppointments(response.data.data);
+                console.log('✅ Loaded completed appointments:', response.data.data);
             }
         } catch (error) {
-            console.error('Error fetching coach info:', error);
+            console.error('❌ Error loading completed appointments:', error);
+            message.error('Không thể tải danh sách lịch hẹn đã hoàn thành');
+        } finally {
+            setLoading(false);
         }
     };
 
-    const checkExistingFeedback = async () => {
+    const handleFeedback = (appointment) => {
+        setSelectedAppointment(appointment);
+        setFeedbackModal(true);
+        form.resetFields();
+    };
+
+    const submitFeedback = async (values) => {
         try {
-            const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
-            const response = await fetch(`http://localhost:4000/api/coach/${coachId}/feedback`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                // Check if current user already rated this coach
-                const userStr = localStorage.getItem('user') || localStorage.getItem('member');
-                const userId = userStr ? JSON.parse(userStr)?.UserID || JSON.parse(userStr)?.id : null;
-                const userFeedback = data.data.feedback.find(f =>
-                    f.MemberID === userId &&
-                    (!appointmentId || f.AppointmentID === appointmentId)
-                );
-
-                if (userFeedback) {
-                    setExistingFeedback(userFeedback);
-                }
-            }
-        } catch (error) {
-            console.error('Error checking existing feedback:', error);
-        }
-    };
-
-    const handleStarClick = (value) => {
-        setRating(value);
-    };
-
-    const handleCategoryRating = (category, value) => {
-        setCategories(prev => ({
-            ...prev,
-            [category]: value
-        }));
-    };
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (rating === 0) {
-            alert('Vui lòng chọn số sao đánh giá');
-            return;
-        }
-
-        setIsSubmitting(true);
-
-        try {
-            // Debug: Check all possible token sources
-            const tokenSources = {
-                memberToken: localStorage.getItem('memberToken'),
-                token: localStorage.getItem('token'),
-                sessionToken: sessionStorage.getItem('token'),
-                sessionMemberToken: sessionStorage.getItem('memberToken')
-            };
-
-            console.log('🔍 Available tokens:', tokenSources);
-
-            // Try different token sources
-            const token = localStorage.getItem('memberToken') ||
-                localStorage.getItem('token') ||
-                sessionStorage.getItem('token') ||
-                sessionStorage.getItem('memberToken');
-
-            if (!token) {
-                alert('Bạn cần đăng nhập để gửi đánh giá. Vui lòng đăng nhập lại.');
-                return;
-            }
-
-            // Debug: Check user info
-            const userSources = {
-                user: localStorage.getItem('user'),
-                member: localStorage.getItem('member'),
-                sessionUser: sessionStorage.getItem('user'),
-                sessionMember: sessionStorage.getItem('member')
-            };
-
-            console.log('🔍 Available user info:', userSources);
-
-            console.log('🚀 Submitting feedback with token:', token.substring(0, 20) + '...');
+            setSubmitting(true);
+            const token = localStorage.getItem('token');
 
             const feedbackData = {
-                coachId: parseInt(coachId),
-                rating,
-                comment: comment.trim(),
-                categories,
-                isAnonymous,
-                ...(appointmentId && { appointmentId: parseInt(appointmentId) })
+                coachId: selectedAppointment.coach.id,
+                appointmentId: selectedAppointment.id,
+                rating: values.rating,
+                comment: values.comment || '',
+                categories: {
+                    professionalism: values.professionalism || 5,
+                    helpfulness: values.helpfulness || 5,
+                    communication: values.communication || 5,
+                    knowledge: values.knowledge || 5
+                },
+                isAnonymous: false
             };
 
-            console.log('📝 Feedback data:', feedbackData);
+            console.log('📝 Submitting feedback:', feedbackData);
 
-            const response = await fetch('http://localhost:4000/api/coach/feedback', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify(feedbackData)
+            const response = await axios.post('http://localhost:4000/api/chat/feedback', feedbackData, {
+                headers: { 'Authorization': `Bearer ${token}` }
             });
 
-            console.log('📡 Response status:', response.status);
-            const data = await response.json();
-            console.log('📡 Response data:', data);
-
-            if (response.ok) {
-                alert('Đánh giá đã được gửi thành công!');
-                if (onSubmitSuccess) onSubmitSuccess();
-                if (onClose) onClose();
-            } else {
-                // Handle specific error messages
-                if (response.status === 403) {
-                    alert('Bạn không có quyền gửi đánh giá này. Vui lòng đăng nhập với tài khoản member.');
-                } else if (response.status === 401) {
-                    alert('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-                } else if (response.status === 400) {
-                    alert(data.message || 'Dữ liệu gửi không hợp lệ');
-                } else {
-                    alert(data.message || `Lỗi ${response.status}: ${response.statusText}`);
-                }
+            if (response.data.success) {
+                message.success('Cảm ơn bạn đã đánh giá coach! 🌟');
+                setFeedbackModal(false);
+                form.resetFields();
+                setSelectedAppointment(null);
+                // Reload để remove appointment đã feedback
+                loadCompletedAppointments();
             }
         } catch (error) {
-            console.error('Error submitting feedback:', error);
-            alert('Không thể kết nối đến server. Vui lòng thử lại sau.');
+            console.error('❌ Error submitting feedback:', error);
+            message.error('Không thể gửi đánh giá. Vui lòng thử lại.');
         } finally {
-            setIsSubmitting(false);
+            setSubmitting(false);
         }
     };
 
-    const renderStars = (currentRating, onStarClick, isCategory = false, category = '') => {
-        return (
-            <div className="stars-container">
-                {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                        key={star}
-                        type="button"
-                        className={`star ${star <= (isCategory ? currentRating : (hoverRating || rating)) ? 'active' : ''}`}
-                        onClick={() => isCategory ? handleCategoryRating(category, star) : handleStarClick(star)}
-                        onMouseEnter={() => !isCategory && setHoverRating(star)}
-                        onMouseLeave={() => !isCategory && setHoverRating(0)}
-                        disabled={existingFeedback}
-                    >
-                        {star <= (isCategory ? currentRating : (hoverRating || rating)) ?
-                            <StarFilled style={{ fontSize: isCategory ? 16 : 24 }} /> :
-                            <StarOutlined style={{ fontSize: isCategory ? 16 : 24 }} />
-                        }
-                    </button>
-                ))}
-                <span className="rating-text">
-                    {isCategory ? `${currentRating}/5` : `${rating}/5`}
-                </span>
-            </div>
-        );
-    };
-
-    if (existingFeedback) {
-        return (
-            <div className="feedback-modal-overlay">
-                <div className="feedback-modal">
-                    <div className="feedback-header">
-                        <h3>Đánh giá của bạn</h3>
-                        <button onClick={onClose} className="close-btn">&times;</button>
-                    </div>
-
-                    <div className="existing-feedback">
-                        <div className="coach-info">
-                            {coachInfo && (
-                                <>
-                                    <img
-                                        src={coachInfo.Avatar || '/default-avatar.png'}
-                                        alt={coachInfo.FullName}
-                                        className="coach-avatar"
-                                    />
-                                    <div>
-                                        <h4>{coachInfo.FullName}</h4>
-                                        <p>{coachInfo.Specialization}</p>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-
-                        <div className="rating-display">
-                            <div className="overall-rating">
-                                <span>Đánh giá tổng thể:</span>
-                                {renderStars(existingFeedback.Rating, null)}
-                            </div>
-
-                            {existingFeedback.Categories && (
-                                <div className="category-ratings">
-                                    {Object.entries(JSON.parse(existingFeedback.Categories)).map(([key, value]) => (
-                                        <div key={key} className="category-item">
-                                            <span>{categoryLabels[key]}:</span>
-                                            {renderStars(value, null, true)}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {existingFeedback.Comment && (
-                                <div className="comment-display">
-                                    <h5>Nhận xét:</h5>
-                                    <p>{existingFeedback.Comment}</p>
-                                </div>
-                            )}
-
-                            <div className="feedback-info">
-                                <small>
-                                    <ClockCircleOutlined style={{ fontSize: 14 }} />
-                                    Đánh giá vào: {new Date(existingFeedback.CreatedAt).toLocaleDateString('vi-VN')}
-                                </small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     return (
-        <div className="feedback-modal-overlay">
-            <div className="feedback-modal">
-                <div className="feedback-header">
-                    <h3>Đánh giá Coach</h3>
-                    <button onClick={onClose} className="close-btn">&times;</button>
+        <div className="p-6 bg-gray-50 min-h-screen">
+            <div className="max-w-4xl mx-auto">
+                {/* Header */}
+                <div className="mb-6">
+                    <Title level={2} className="mb-2 text-gray-800">
+                        <StarOutlined className="mr-3 text-yellow-500" />
+                        Đánh giá Coach
+                    </Title>
+                    <Text className="text-gray-600">
+                        Đánh giá các buổi tư vấn đã hoàn thành để giúp cải thiện dịch vụ
+                    </Text>
                 </div>
 
-                <div className="coach-info">
-                    {coachInfo && (
-                        <>
-                            <img
-                                src={coachInfo.Avatar || '/default-avatar.png'}
-                                alt={coachInfo.FullName}
-                                className="coach-avatar"
-                            />
+                {/* Completed Appointments List */}
+                <Card
+                    className="shadow-lg"
+                    style={{ borderRadius: '12px' }}
+                    bodyStyle={{ padding: '24px' }}
+                >
+                    <List
+                        loading={loading}
+                        dataSource={completedAppointments}
+                        locale={{
+                            emptyText: (
+                                <Empty
+                                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                    description={
+                                        <div>
+                                            <p>Chưa có buổi tư vấn nào đã hoàn thành</p>
+                                            <Text type="secondary" className="text-sm">
+                                                Sau khi hoàn thành buổi tư vấn với coach, bạn có thể đánh giá tại đây
+                                            </Text>
+                                        </div>
+                                    }
+                                />
+                            )
+                        }}
+                        renderItem={(appointment) => (
+                            <List.Item
+                                key={appointment.id}
+                                className="border-b border-gray-100 py-4"
+                                actions={[
+                                    <Button
+                                        key="feedback-btn"
+                                        type="primary"
+                                        icon={<StarOutlined />}
+                                        onClick={() => handleFeedback(appointment)}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #faad14 0%, #fa8c16 100%)',
+                                            border: 'none',
+                                            borderRadius: '8px'
+                                        }}
+                                    >
+                                        Đánh giá
+                                    </Button>
+                                ]}
+                            >
+                                <List.Item.Meta
+                                    avatar={
+                                        <Avatar
+                                            size={48}
+                                            src={appointment.coach?.avatar}
+                                            icon={<UserOutlined />}
+                                            className="border-2 border-yellow-100"
+                                        />
+                                    }
+                                    title={
+                                        <div className="flex items-center space-x-3">
+                                            <span className="font-semibold text-lg">
+                                                Coach {appointment.coach?.fullName}
+                                            </span>
+                                            <Tag icon={<CheckCircleOutlined />} color="success">
+                                                Đã hoàn thành
+                                            </Tag>
+                                        </div>
+                                    }
+                                    description={
+                                        <div className="space-y-2">
+                                            <div className="flex items-center space-x-4 text-sm text-gray-600">
+                                                <span>📅 {dayjs(appointment.appointmentDate).format('DD/MM/YYYY HH:mm')}</span>
+                                                <span>⏱️ {appointment.duration} phút</span>
+                                                <span>💬 {appointment.type === 'video' ? 'Video call' : appointment.type === 'audio' ? 'Audio call' : 'Chat'}</span>
+                                            </div>
+                                            {appointment.notes && (
+                                                <div className="text-sm text-gray-500">
+                                                    <strong>Ghi chú:</strong> {appointment.notes}
+                                                </div>
+                                            )}
+                                        </div>
+                                    }
+                                />
+                            </List.Item>
+                        )}
+                    />
+                </Card>
+
+                {/* Feedback Modal */}
+                <Modal
+                    title={
+                        <div className="flex items-center space-x-3 py-2">
+                            <div className="w-10 h-10 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full flex items-center justify-center">
+                                <StarOutlined className="text-white text-lg" />
+                            </div>
                             <div>
-                                <h4>{coachInfo.FullName}</h4>
-                                <p>{coachInfo.Specialization}</p>
-                                <div className="coach-stats">
-                                    <span>⭐ {coachInfo.AverageRating} ({coachInfo.ReviewCount} đánh giá)</span>
+                                <div className="text-lg font-semibold text-gray-800">
+                                    Đánh giá Coach {selectedAppointment?.coach?.fullName}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                    Buổi tư vấn ngày {selectedAppointment && dayjs(selectedAppointment.appointmentDate).format('DD/MM/YYYY')}
                                 </div>
                             </div>
-                        </>
-                    )}
-                </div>
-
-                <form onSubmit={handleSubmit} className="feedback-form">
-                    <div className="form-group">
-                        <label>Đánh giá tổng thể *</label>
-                        {renderStars(rating, handleStarClick)}
-                    </div>
-
-                    <div className="form-group">
-                        <label>Đánh giá chi tiết</label>
-                        <div className="category-ratings">
-                            {Object.entries(categories).map(([key, value]) => (
-                                <div key={key} className="category-item">
-                                    <span>{categoryLabels[key]}:</span>
-                                    {renderStars(value, null, true, key)}
-                                </div>
-                            ))}
                         </div>
-                    </div>
-
-                    <div className="form-group">
-                        <label>Nhận xét</label>
-                        <textarea
-                            value={comment}
-                            onChange={(e) => setComment(e.target.value)}
-                            placeholder="Chia sẻ trải nghiệm của bạn với coach này..."
-                            rows={4}
-                            maxLength={500}
-                        />
-                        <small>{comment.length}/500 ký tự</small>
-                    </div>
-
-                    <div className="form-group">
-                        <label className="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={isAnonymous}
-                                onChange={(e) => setIsAnonymous(e.target.checked)}
+                    }
+                    open={feedbackModal}
+                    onCancel={() => {
+                        setFeedbackModal(false);
+                        form.resetFields();
+                        setSelectedAppointment(null);
+                    }}
+                    footer={null}
+                    width={600}
+                    style={{ borderRadius: '16px' }}
+                >
+                    <Form
+                        form={form}
+                        layout="vertical"
+                        onFinish={submitFeedback}
+                        className="space-y-4"
+                    >
+                        {/* Overall Rating */}
+                        <Form.Item
+                            name="rating"
+                            label={<span className="font-medium text-gray-700">Đánh giá tổng thể</span>}
+                            rules={[{ required: true, message: 'Vui lòng đánh giá' }]}
+                        >
+                            <Rate
+                                style={{ fontSize: '32px' }}
+                                character={<StarOutlined />}
+                                className="text-yellow-400"
                             />
-                            <span>Đánh giá ẩn danh</span>
-                        </label>
-                        <small>Tên của bạn sẽ không được hiển thị công khai</small>
-                    </div>
+                        </Form.Item>
 
-                    <div className="form-actions">
-                        <button type="button" onClick={onClose} className="btn-cancel">
-                            Hủy
-                        </button>
-                        <button type="submit" disabled={isSubmitting || rating === 0} className="btn-submit">
-                            {isSubmitting ? (
-                                <>
-                                    <div className="spinner"></div>
-                                    Đang gửi...
-                                </>
-                            ) : (
-                                <>
-                                    <SendOutlined style={{ fontSize: 16 }} />
+                        {/* Category Ratings */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <Form.Item
+                                name="professionalism"
+                                label="Tính chuyên nghiệp"
+                                initialValue={5}
+                            >
+                                <Rate style={{ fontSize: '20px' }} />
+                            </Form.Item>
+                            <Form.Item
+                                name="helpfulness"
+                                label="Tính hữu ích"
+                                initialValue={5}
+                            >
+                                <Rate style={{ fontSize: '20px' }} />
+                            </Form.Item>
+                            <Form.Item
+                                name="communication"
+                                label="Kỹ năng giao tiếp"
+                                initialValue={5}
+                            >
+                                <Rate style={{ fontSize: '20px' }} />
+                            </Form.Item>
+                            <Form.Item
+                                name="knowledge"
+                                label="Kiến thức chuyên môn"
+                                initialValue={5}
+                            >
+                                <Rate style={{ fontSize: '20px' }} />
+                            </Form.Item>
+                        </div>
+
+                        {/* Comment */}
+                        <Form.Item
+                            name="comment"
+                            label={<span className="font-medium text-gray-700">Nhận xét chi tiết</span>}
+                        >
+                            <TextArea
+                                rows={4}
+                                placeholder="Chia sẻ trải nghiệm của bạn về buổi tư vấn..."
+                                style={{ borderRadius: '8px' }}
+                            />
+                        </Form.Item>
+
+                        <Form.Item className="mb-0 pt-4">
+                            <div className="flex justify-end space-x-3">
+                                <Button
+                                    onClick={() => setFeedbackModal(false)}
+                                    style={{ height: '44px', borderRadius: '8px' }}
+                                >
+                                    Hủy
+                                </Button>
+                                <Button
+                                    type="primary"
+                                    htmlType="submit"
+                                    loading={submitting}
+                                    style={{
+                                        background: 'linear-gradient(135deg, #faad14 0%, #fa8c16 100%)',
+                                        border: 'none',
+                                        height: '44px',
+                                        borderRadius: '8px'
+                                    }}
+                                >
                                     Gửi đánh giá
-                                </>
-                            )}
-                        </button>
-                    </div>
-                </form>
+                                </Button>
+                            </div>
+                        </Form.Item>
+                    </Form>
+                </Modal>
             </div>
         </div>
     );

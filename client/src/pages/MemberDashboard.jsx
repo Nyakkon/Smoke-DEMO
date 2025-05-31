@@ -8,18 +8,30 @@ import {
     message,
     Menu,
     Badge,
-    Statistic
+    Statistic,
+    Table,
+    Tag,
+    Space,
+    Button,
+    Empty,
+    Spin
 } from 'antd';
 import {
     CalendarOutlined,
     BarChartOutlined,
     HeartOutlined,
     FireOutlined,
-    DollarOutlined
+    DollarOutlined,
+    ClockCircleOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    EyeOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import Appointments from '../components/member/Appointments';
 import ProgressTracking from '../components/member/ProgressTracking';
+import SavingsDisplay from '../components/common/SavingsDisplay';
 
 const { Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -43,26 +55,67 @@ const MemberDashboard = () => {
     const loadMemberInfo = async () => {
         try {
             setLoading(true);
-            // Get from localStorage or API
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
             if (!token) {
                 navigate('/auth');
                 return;
             }
 
-            // Mock member info - in real app, fetch from API
-            setMemberInfo({
-                id: 1,
-                firstName: 'Nguyễn',
-                lastName: 'Văn A',
-                email: 'member@example.com',
-                avatar: null,
-                smokingStatus: {
-                    daysSinceQuit: 15,
-                    cigarettesAvoided: 150,
-                    moneySaved: 450000
+            // Load real data from API
+            try {
+                // Get progress summary for smoking stats
+                const progressResponse = await axios.get('http://localhost:4000/api/progress/summary', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                // Get streak information
+                const streakResponse = await axios.get('http://localhost:4000/api/progress/streak', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                // Get user profile
+                const profileResponse = await axios.get('http://localhost:4000/api/users/profile', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (progressResponse.data.success && profileResponse.data.success) {
+                    const progressData = progressResponse.data.data;
+                    const streakData = streakResponse.data.success ? streakResponse.data.data : {};
+                    const userProfile = profileResponse.data.data.userInfo;
+
+                    setMemberInfo({
+                        id: userProfile.id,
+                        firstName: userProfile.firstName,
+                        lastName: userProfile.lastName,
+                        email: userProfile.email,
+                        avatar: userProfile.avatar,
+                        smokingStatus: {
+                            daysSinceQuit: streakData.currentStreak || progressData.SmokeFreeDays || 0,
+                            cigarettesAvoided: progressData.CigarettesNotSmoked || 0,
+                        }
+                    });
+                } else {
+                    throw new Error('Failed to load progress data');
                 }
-            });
+
+            } catch (apiError) {
+                console.error('Error loading real data:', apiError);
+                message.warning('Không thể tải dữ liệu từ server. Hiển thị dữ liệu demo...');
+
+                // Fallback to mock data if API fails (without hardcoded money)
+                setMemberInfo({
+                    id: 1,
+                    firstName: 'Nguyễn',
+                    lastName: 'Văn A',
+                    email: 'member@example.com',
+                    avatar: null,
+                    smokingStatus: {
+                        daysSinceQuit: 7,
+                        cigarettesAvoided: 70,
+                    }
+                });
+            }
+
         } catch (error) {
             console.error('Error loading member info:', error);
             message.error('Không thể tải thông tin thành viên');
@@ -70,8 +123,6 @@ const MemberDashboard = () => {
             setLoading(false);
         }
     };
-
-
 
     const menuItems = [
         {
@@ -135,12 +186,14 @@ const MemberDashboard = () => {
                                     />
                                 </Col>
                                 <Col span={24}>
-                                    <Statistic
+                                    {/* Use unified SavingsDisplay component */}
+                                    <SavingsDisplay
                                         title="Tiền tiết kiệm"
-                                        value={memberInfo.smokingStatus.moneySaved}
+                                        showDetails={false}
+                                        style={{ textAlign: 'center' }}
+                                        valueStyle={{ color: '#389e0d', fontSize: 16 }}
                                         prefix={<DollarOutlined />}
                                         suffix="VNĐ"
-                                        valueStyle={{ color: '#389e0d', fontSize: 16 }}
                                     />
                                 </Col>
                             </Row>

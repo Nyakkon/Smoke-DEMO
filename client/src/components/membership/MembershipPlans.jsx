@@ -127,31 +127,6 @@ const MembershipPlans = () => {
         loadData();
     }, [dispatch, user]);
 
-    useEffect(() => {
-        if (success && !loading) {
-            // Use antd notification API
-            notification.success({
-                message: 'Success',
-                description: 'Membership plan registered successfully!'
-            });
-
-            if (paymentModalVisible) {
-                setPaymentModalVisible(false);
-            }
-
-            // Reload current membership data
-            if (user) {
-                dispatch(getCurrentMembership());
-
-                // Also fetch updated payment history
-                fetchPaymentHistory();
-            }
-
-            // Clear success state to prevent repeated notifications
-            dispatch(clearSuccess());
-        }
-    }, [success, loading, paymentModalVisible, dispatch, user]);
-
     // Don't show API errors in demo mode
     useEffect(() => {
         if (error && !useSampleData) {
@@ -201,19 +176,47 @@ const MembershipPlans = () => {
             const endDate = new Date(latestPayment.EndDate).toLocaleDateString('vi-VN');
             const status = latestPayment.PaymentStatus;
 
+            // Determine alert type and status text based on payment status
+            let alertType = 'info';
+            let statusText = 'Không xác định';
+
+            if (status === 'confirmed') {
+                alertType = 'success';
+                statusText = '✅ Đã xác nhận';
+            } else if (status === 'pending') {
+                alertType = 'warning';
+                statusText = '⏳ Đang chờ admin xác nhận thanh toán';
+            } else if (status === 'rejected') {
+                alertType = 'error';
+                statusText = '❌ Đã từ chối';
+            }
+
             return (
                 <Alert
-                    message="Thông tin đơn đặt hàng"
+                    message={status === 'pending' ? "🔄 Đơn hàng đang chờ xác nhận" : "📋 Thông tin đơn đặt hàng"}
                     description={
                         <div>
                             <p><strong>Gói dịch vụ:</strong> {latestPayment.PlanName}</p>
                             <p><strong>Ngày bắt đầu:</strong> {startDate}</p>
                             <p><strong>Ngày kết thúc:</strong> {endDate}</p>
-                            <p><strong>Trạng thái:</strong> {status === 'confirmed' ? 'Đã xác nhận' : status === 'pending' ? 'Đang chờ xác nhận' : 'Đã từ chối'}</p>
+                            <p><strong>Trạng thái:</strong> <span style={{
+                                color: status === 'confirmed' ? '#52c41a' :
+                                    status === 'pending' ? '#faad14' :
+                                        status === 'rejected' ? '#ff4d4f' : '#666',
+                                fontWeight: 'bold',
+                                fontSize: '16px'
+                            }}>{statusText}</span></p>
                             <p><strong>Phương thức thanh toán:</strong> {latestPayment.PaymentMethod === 'BankTransfer' ? 'Chuyển khoản' : 'Tiền mặt'}</p>
+                            {status === 'pending' && (
+                                <div style={{ marginTop: '12px', padding: '8px', backgroundColor: '#fff7e6', borderRadius: '4px' }}>
+                                    <p style={{ margin: 0, color: '#d46b08', fontWeight: 'bold' }}>
+                                        ⚠️ Lưu ý: Đơn hàng sẽ được kích hoạt sau khi admin xác nhận thanh toán
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     }
-                    type="info"
+                    type={alertType}
                     showIcon
                     style={{ marginBottom: 20 }}
                 />
@@ -231,6 +234,27 @@ const MembershipPlans = () => {
 
     const handlePayment = () => {
         if (selectedPlan) {
+            // Prevent multiple submissions if already loading
+            if (loading) {
+                notification.warning({
+                    message: 'Đang xử lý',
+                    description: 'Vui lòng chờ trong khi hệ thống xử lý yêu cầu của bạn.',
+                    duration: 3
+                });
+                return;
+            }
+
+            // Check if user already has pending payment
+            if (paymentHistory && paymentHistory.some(p => p.PaymentStatus === 'pending')) {
+                notification.warning({
+                    message: 'Đã có thanh toán đang chờ',
+                    description: 'Bạn đã có một thanh toán đang chờ xác nhận. Vui lòng chờ admin xác nhận trước khi đặt mua gói mới.',
+                    duration: 5
+                });
+                setPaymentModalVisible(false);
+                return;
+            }
+
             try {
                 // Set to confirmation step
                 setCurrentStep(2);
@@ -257,21 +281,16 @@ const MembershipPlans = () => {
                 }))
                     .unwrap()
                     .then(response => {
-                        // Show success message
-                        notification.success({
-                            message: 'Payment Submitted',
-                            description: 'Your payment is being processed.'
+                        // Show warning message about pending confirmation (NOT success)
+                        notification.warning({
+                            message: 'Đơn hàng đang chờ xác nhận',
+                            description: 'Đơn hàng của bạn đã được tạo và đang chờ admin xác nhận thanh toán. Bạn sẽ nhận được thông báo khi đơn hàng được duyệt.',
+                            duration: 8
                         });
                         setPaymentModalVisible(false);
 
-                        // Show notification about pending confirmation
-                        notification.info({
-                            message: 'Processing',
-                            description: 'Your membership will be activated once confirmed.'
-                        });
-
                         // Log the successful response
-                        console.log('Payment success response:', response);
+                        console.log('Payment submitted response:', response);
 
                         // Refresh user data to get updated role
                         dispatch(getCurrentUser());
@@ -424,7 +443,7 @@ const MembershipPlans = () => {
             key: 'action',
             render: (_, record) => {
                 const isCurrent = currentMembership && currentMembership.PlanID === record.PlanID;
-                const hasPendingPayment = currentMembership && currentMembership.Status === 'pending';
+                const hasPendingPayment = paymentHistory && paymentHistory.some(p => p.PaymentStatus === 'pending');
                 const isPurchasable = user && (!currentMembership || currentMembership.PlanID !== record.PlanID) && !hasPendingPayment;
                 const isGuestPlan = record.Price === 0;
 
@@ -440,6 +459,7 @@ const MembershipPlans = () => {
                     isPurchasable && !isGuestPlan ? (
                         <Button
                             type="primary"
+                            disabled={loading}
                             onClick={() => handleSelectPlan(record)}
                         >
                             Subscribe Now
@@ -581,6 +601,7 @@ const MembershipPlans = () => {
                         key="submit"
                         type="primary"
                         loading={loading}
+                        disabled={loading || (paymentHistory && paymentHistory.some(p => p.PaymentStatus === 'pending'))}
                         onClick={handlePayment}
                     >
                         {currentStep === 1 ? 'Pay Now' : 'Confirm'}

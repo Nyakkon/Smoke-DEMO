@@ -100,7 +100,12 @@ const MemberChat = ({ style, height = 400 }) => {
             if (error.code === 'ECONNABORTED') {
                 setError('Timeout: Server phản hồi quá chậm. Vui lòng thử lại');
             } else if (error.response?.status === 404) {
-                setError('Bạn chưa được assign coach hoặc chưa có kế hoạch cai thuốc active. Vui lòng liên hệ admin để được hỗ trợ');
+                const errorData = error.response.data;
+                if (errorData.error_code === 'NO_ASSIGNED_COACH') {
+                    setError('Bạn chưa được phân công coach. Vui lòng liên hệ admin để được phân công coach trước khi có thể chat.');
+                } else {
+                    setError('Bạn chưa được assign coach hoặc chưa có kế hoạch cai thuốc active. Vui lòng liên hệ admin để được hỗ trợ');
+                }
             } else if (error.response?.status === 401) {
                 setError('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại');
                 localStorage.removeItem('token');
@@ -152,61 +157,35 @@ const MemberChat = ({ style, height = 400 }) => {
             >
                 <Alert
                     message="Không thể tải chat"
-                    description={error}
+                    description={
+                        <div>
+                            <p>{error}</p>
+                            {error.includes('chưa được phân công coach') && (
+                                <div className="mt-3">
+                                    <p className="text-sm text-gray-600 mb-3">
+                                        💡 <strong>Hướng dẫn:</strong> Để sử dụng tính năng chat với coach, bạn cần được admin phân công một coach chuyên nghiệp.
+                                    </p>
+                                    <Space>
+                                        <Button
+                                            type="primary"
+                                            size="small"
+                                            onClick={() => window.location.href = 'mailto:admin@smokeking.com?subject=Yêu cầu phân công coach'}
+                                        >
+                                            📧 Liên hệ Admin
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            onClick={loadConversation}
+                                        >
+                                            🔄 Thử lại
+                                        </Button>
+                                    </Space>
+                                </div>
+                            )}
+                        </div>
+                    }
                     type="warning"
                     showIcon
-                    action={
-                        <Space>
-                            <Button
-                                size="small"
-                                icon={<ReloadOutlined />}
-                                onClick={loadConversation}
-                            >
-                                Thử lại
-                            </Button>
-                            {error.includes('server') && (
-                                <Button
-                                    size="small"
-                                    type="link"
-                                    onClick={() => window.open('http://localhost:4000/api/test', '_blank')}
-                                >
-                                    Test Server
-                                </Button>
-                            )}
-                            {error.includes('404') && (
-                                <Button
-                                    size="small"
-                                    type="primary"
-                                    onClick={async () => {
-                                        try {
-                                            message.loading('Đang fix chat system...', 0);
-
-                                            // Call fix API
-                                            const response = await axios.post('http://localhost:4000/api/chat/fix-member-coach', {}, {
-                                                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-                                            });
-
-                                            message.destroy();
-                                            if (response.data.success) {
-                                                message.success('Fix thành công! Đang tải lại chat...');
-                                                setTimeout(() => {
-                                                    loadConversation();
-                                                }, 1000);
-                                            } else {
-                                                message.error('Fix failed: ' + response.data.message);
-                                            }
-                                        } catch (error) {
-                                            message.destroy();
-                                            message.error('Không thể fix: ' + error.message);
-                                            message.info('Vui lòng chạy fix script trong thư mục server: fix-chat-real-coaches.bat');
-                                        }
-                                    }}
-                                >
-                                    Auto Fix
-                                </Button>
-                            )}
-                        </Space>
-                    }
                 />
             </Card>
         );
@@ -224,8 +203,36 @@ const MemberChat = ({ style, height = 400 }) => {
                 style={style}
             >
                 <Alert
-                    message="Chưa có coach"
-                    description="Bạn chưa được assign coach. Vui lòng liên hệ admin để được hỗ trợ."
+                    message="Chưa có coach được phân công"
+                    description={
+                        <div>
+                            <p>Bạn chưa được phân công coach nào. Để có thể sử dụng tính năng chat, vui lòng liên hệ admin để được phân công một coach chuyên nghiệp.</p>
+                            <div className="mt-3">
+                                <p className="text-sm text-gray-600 mb-3">
+                                    🎯 <strong>Lợi ích khi có coach:</strong>
+                                </p>
+                                <ul className="text-sm text-gray-600 mb-3 ml-4">
+                                    <li>• Nhận tư vấn chuyên nghiệp về cai thuốc</li>
+                                    <li>• Được hỗ trợ 1:1 qua chat</li>
+                                    <li>• Đặt lịch tư vấn video/audio call</li>
+                                    <li>• Theo dõi tiến trình cá nhân hóa</li>
+                                </ul>
+                                <Space>
+                                    <Button
+                                        type="primary"
+                                        onClick={() => window.location.href = 'mailto:admin@smokeking.com?subject=Yêu cầu phân công coach&body=Xin chào Admin,%0D%0A%0D%0ATôi muốn được phân công một coach để hỗ trợ quá trình cai thuốc. Vui lòng liên hệ lại với tôi.%0D%0A%0D%0ACảm ơn!'}
+                                    >
+                                        📧 Yêu cầu phân công coach
+                                    </Button>
+                                    <Button
+                                        onClick={loadConversation}
+                                    >
+                                        🔄 Kiểm tra lại
+                                    </Button>
+                                </Space>
+                            </div>
+                        </div>
+                    }
                     type="info"
                     showIcon
                 />
