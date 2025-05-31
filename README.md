@@ -62,7 +62,7 @@ smoking-cessation-platform/
    # Start backend server
    cd server
    npm run dev
-
+   ```
    # Start frontend server
    cd ../client
    npm start
