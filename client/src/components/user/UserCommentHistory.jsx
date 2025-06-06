@@ -12,15 +12,11 @@ import {
     Popconfirm,
     Spin,
     Empty,
-    Input,
     Tag,
     Alert
 } from 'antd';
 import {
     DeleteOutlined,
-    EditOutlined,
-    SaveOutlined,
-    CloseOutlined,
     CommentOutlined,
     MessageOutlined
 } from '@ant-design/icons';
@@ -30,16 +26,12 @@ import { vi } from 'date-fns/locale';
 
 const { Content } = Layout;
 const { Title, Text } = Typography;
-const { TextArea } = Input;
 
 const UserCommentHistory = () => {
     const { user } = useSelector(state => state.auth);
     const navigate = useNavigate();
     const [comments, setComments] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [editingCommentId, setEditingCommentId] = useState(null);
-    const [editText, setEditText] = useState('');
-    const [updating, setUpdating] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -81,49 +73,6 @@ const UserCommentHistory = () => {
             }
         } finally {
             setLoading(false);
-        }
-    };
-
-    const handleStartEdit = (comment) => {
-        setEditingCommentId(comment.CommentID);
-        setEditText(comment.Content);
-    };
-
-    const handleCancelEdit = () => {
-        setEditingCommentId(null);
-        setEditText('');
-    };
-
-    const handleUpdateComment = async (commentId) => {
-        if (!editText.trim()) {
-            message.warning('Nội dung comment không được để trống');
-            return;
-        }
-
-        setUpdating(true);
-        try {
-            const response = await axios.put(`/api/community/comments/${commentId}`, {
-                content: editText
-            }, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-            });
-
-            if (response.data.success) {
-                setComments(prevComments =>
-                    prevComments.map(comment =>
-                        comment.CommentID === commentId
-                            ? { ...comment, Content: editText }
-                            : comment
-                    )
-                );
-                message.success('Cập nhật comment thành công');
-                handleCancelEdit();
-            }
-        } catch (error) {
-            console.error('Error updating comment:', error);
-            message.error('Lỗi khi cập nhật comment');
-        } finally {
-            setUpdating(false);
         }
     };
 
@@ -231,77 +180,36 @@ const UserCommentHistory = () => {
                                             </div>
 
                                             {/* Action Buttons */}
-                                            {editingCommentId !== comment.CommentID && (
-                                                <Space size="small">
+                                            <Space size="small">
+                                                <Popconfirm
+                                                    title="Bạn có chắc muốn xóa comment này?"
+                                                    description="Hành động này không thể hoàn tác"
+                                                    onConfirm={() => handleDeleteComment(comment.CommentID)}
+                                                    okText="Xóa"
+                                                    cancelText="Hủy"
+                                                    okButtonProps={{ danger: true }}
+                                                >
                                                     <Button
                                                         type="text"
                                                         size="small"
-                                                        icon={<EditOutlined />}
-                                                        onClick={() => handleStartEdit(comment)}
+                                                        danger
+                                                        icon={<DeleteOutlined />}
                                                     >
-                                                        Sửa
+                                                        Xóa
                                                     </Button>
-                                                    <Popconfirm
-                                                        title="Bạn có chắc muốn xóa comment này?"
-                                                        description="Hành động này không thể hoàn tác"
-                                                        onConfirm={() => handleDeleteComment(comment.CommentID)}
-                                                        okText="Xóa"
-                                                        cancelText="Hủy"
-                                                        okButtonProps={{ danger: true }}
-                                                    >
-                                                        <Button
-                                                            type="text"
-                                                            size="small"
-                                                            danger
-                                                            icon={<DeleteOutlined />}
-                                                        >
-                                                            Xóa
-                                                        </Button>
-                                                    </Popconfirm>
-                                                </Space>
-                                            )}
+                                                </Popconfirm>
+                                            </Space>
                                         </div>
 
                                         {/* Comment Content */}
-                                        {editingCommentId === comment.CommentID ? (
-                                            <div>
-                                                <TextArea
-                                                    value={editText}
-                                                    onChange={(e) => setEditText(e.target.value)}
-                                                    rows={3}
-                                                    style={{ marginBottom: 8 }}
-                                                    placeholder="Chỉnh sửa nội dung comment..."
-                                                />
-                                                <Space>
-                                                    <Button
-                                                        type="primary"
-                                                        size="small"
-                                                        icon={<SaveOutlined />}
-                                                        loading={updating}
-                                                        onClick={() => handleUpdateComment(comment.CommentID)}
-                                                        disabled={!editText.trim()}
-                                                    >
-                                                        Lưu
-                                                    </Button>
-                                                    <Button
-                                                        size="small"
-                                                        icon={<CloseOutlined />}
-                                                        onClick={handleCancelEdit}
-                                                    >
-                                                        Hủy
-                                                    </Button>
-                                                </Space>
-                                            </div>
-                                        ) : (
-                                            <div style={{
-                                                padding: '12px',
-                                                backgroundColor: '#f8f9fa',
-                                                borderLeft: '4px solid #1890ff',
-                                                marginTop: 8
-                                            }}>
-                                                <Text>{comment.Content}</Text>
-                                            </div>
-                                        )}
+                                        <div style={{
+                                            padding: '12px',
+                                            backgroundColor: '#f8f9fa',
+                                            borderLeft: '4px solid #1890ff',
+                                            marginTop: 8
+                                        }}>
+                                            <Text>{comment.Content}</Text>
+                                        </div>
                                     </div>
                                 </List.Item>
                             )}

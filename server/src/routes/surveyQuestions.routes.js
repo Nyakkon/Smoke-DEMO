@@ -180,19 +180,20 @@ router.post('/answers', protect, async (req, res) => {
     }
 
     try {
-        // Start a transaction
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
+        console.log('Authenticated submit answers endpoint called for user:', req.user.id);
+        console.log('Received answers:', answers);
 
-        try {
-            // Process each answer
-            for (const answer of answers) {
-                const { questionId, answerText } = answer;
+        // Process each answer directly without transaction for simplicity
+        for (const answer of answers) {
+            const { questionId, answerText } = answer;
 
-                if (!questionId || answerText === undefined) {
-                    continue;
-                }
+            if (!questionId || answerText === undefined) {
+                continue;
+            }
 
+            console.log(`Processing answer for user ${req.user.id}, question ID: ${questionId}, answer: ${answerText}`);
+
+            try {
                 // Check if the user already answered this question
                 const existingAnswer = await pool.request()
                     .input('userID', req.user.id)
@@ -210,10 +211,11 @@ router.post('/answers', protect, async (req, res) => {
                         .input('answerText', answerText)
                         .query(`
                             UPDATE UserSurveyAnswers
-                            SET AnswerText = @answerText,
-                                UpdatedAt = GETDATE()
+                            SET Answer = @answerText,
+                                SubmittedAt = GETDATE()
                             WHERE UserID = @userID AND QuestionID = @questionID
                         `);
+                    console.log(`Updated answer for user ${req.user.id}, question ID: ${questionId}`);
                 } else {
                     // Insert new answer
                     await pool.request()
@@ -221,24 +223,20 @@ router.post('/answers', protect, async (req, res) => {
                         .input('questionID', questionId)
                         .input('answerText', answerText)
                         .query(`
-                            INSERT INTO UserSurveyAnswers (UserID, QuestionID, AnswerText)
-                            VALUES (@userID, @questionID, @answerText)
+                            INSERT INTO UserSurveyAnswers (UserID, QuestionID, Answer, SubmittedAt)
+                            VALUES (@userID, @questionID, @answerText, GETDATE())
                         `);
+                    console.log(`Inserted new answer for user ${req.user.id}, question ID: ${questionId}`);
                 }
+            } catch (answerError) {
+                console.error(`Error processing answer for question ID ${questionId}:`, answerError);
+                // Continue processing other answers even if one fails
             }
-
-            // Commit the transaction
-            await transaction.commit();
-
-            res.status(200).json({ message: 'Answers submitted successfully' });
-        } catch (error) {
-            // Rollback the transaction in case of error
-            await transaction.rollback();
-            console.error('Error submitting answers:', error);
-            res.status(500).json({ message: 'Server error' });
         }
+
+        res.status(200).json({ message: 'Answers submitted successfully' });
     } catch (error) {
-        console.error('Error starting transaction:', error);
+        console.error('Error submitting answers:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
@@ -253,7 +251,7 @@ router.get('/my-answers', protect, async (req, res) => {
         const result = await pool.request()
             .input('userID', req.user.id)
             .query(`
-                SELECT usa.QuestionID, usa.AnswerText, sq.QuestionText
+                SELECT usa.QuestionID, usa.Answer as AnswerText, sq.QuestionText
                 FROM UserSurveyAnswers usa
                 JOIN SurveyQuestions sq ON usa.QuestionID = sq.QuestionID
                 WHERE usa.UserID = @userID
@@ -262,6 +260,57 @@ router.get('/my-answers', protect, async (req, res) => {
         res.json(result.recordset);
     } catch (error) {
         console.error('Error getting user survey answers:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+/**
+ * @route   GET /api/survey-questions/my-survey-details
+ * @desc    Get current user's survey answers with questions (detailed view)
+ * @access  Private
+ */
+router.get('/my-survey-details', protect, async (req, res) => {
+    try {
+        console.log('Getting detailed survey for user:', req.user.id);
+
+        // Get user information
+        const userResult = await pool.request()
+            .input('userId', req.user.id)
+            .query(`
+                SELECT UserID, FirstName, LastName, Email, Role, CreatedAt
+                FROM Users
+                WHERE UserID = @userId
+            `);
+
+        if (userResult.recordset.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const user = userResult.recordset[0];
+
+        // Get user's survey answers with questions
+        const answersResult = await pool.request()
+            .input('userId', req.user.id)
+            .query(`
+                SELECT 
+                    sq.QuestionID,
+                    sq.QuestionText,
+                    'text' as QuestionType,
+                    'General' as Category,
+                    usa.Answer as AnswerText,
+                    usa.SubmittedAt,
+                    usa.SubmittedAt as UpdatedAt
+                FROM SurveyQuestions sq
+                LEFT JOIN UserSurveyAnswers usa ON sq.QuestionID = usa.QuestionID AND usa.UserID = @userId
+                ORDER BY sq.QuestionID
+            `);
+
+        res.json({
+            user: user,
+            answers: answersResult.recordset
+        });
+    } catch (error) {
+        console.error('Error getting user survey details:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });

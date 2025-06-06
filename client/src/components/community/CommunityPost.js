@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -11,7 +11,7 @@ import {
     CircularProgress,
     Alert
 } from '@mui/material';
-import { createCommunityPost } from '../../store/slices/communitySlice';
+import { createCommunityPost, clearSuccess, clearError } from '../../store/slices/communitySlice';
 
 const CommunityPost = () => {
     const navigate = useNavigate();
@@ -21,6 +21,20 @@ const CommunityPost = () => {
         title: '',
         content: ''
     });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Clear previous states when component mounts
+    useEffect(() => {
+        dispatch(clearError());
+        dispatch(clearSuccess());
+    }, [dispatch]);
+
+    // Handle success navigation
+    useEffect(() => {
+        if (success && !loading && !isSubmitting) {
+            navigate('/community');
+        }
+    }, [success, loading, navigate, isSubmitting]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -32,9 +46,31 @@ const CommunityPost = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        await dispatch(createCommunityPost(formData));
-        if (success) {
-            navigate('/community');
+
+        if (isSubmitting || loading) {
+            return; // Prevent double submission
+        }
+
+        if (!formData.title.trim() || !formData.content.trim()) {
+            return; // Don't submit if empty
+        }
+
+        setIsSubmitting(true);
+
+        try {
+            const resultAction = await dispatch(createCommunityPost(formData));
+
+            if (createCommunityPost.fulfilled.match(resultAction)) {
+                // Success - navigation will be handled by useEffect
+                console.log('Post created successfully');
+            } else {
+                // Error case
+                console.error('Failed to create post:', resultAction.payload);
+            }
+        } catch (error) {
+            console.error('Error creating post:', error);
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -83,16 +119,17 @@ const CommunityPost = () => {
                             type="submit"
                             variant="contained"
                             size="large"
-                            disabled={loading}
+                            disabled={loading || isSubmitting || !formData.title.trim() || !formData.content.trim()}
                         >
-                            {loading ? <CircularProgress size={24} /> : 'Post'}
+                            {(loading || isSubmitting) ? <CircularProgress size={24} /> : 'Đăng bài'}
                         </Button>
                         <Button
                             variant="outlined"
                             size="large"
                             onClick={() => navigate('/community')}
+                            disabled={loading || isSubmitting}
                         >
-                            Cancel
+                            Hủy
                         </Button>
                     </Box>
                 </Box>

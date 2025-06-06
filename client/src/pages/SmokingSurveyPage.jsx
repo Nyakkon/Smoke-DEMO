@@ -108,15 +108,34 @@ const SmokingSurveyPage = () => {
 
             console.log('Submitting answers:', answers);
 
-            // Use the direct API endpoint without authentication
-            const response = await api.post('/api/submit-answers', { answers });
+            // Get the token from localStorage to authenticate the request
+            const token = localStorage.getItem('token');
+            if (!token) {
+                message.error('Bạn cần đăng nhập để gửi khảo sát');
+                return;
+            }
+
+            // Use the authenticated endpoint that uses the correct user ID
+            const response = await axios.post('http://localhost:4000/api/survey-questions/answers',
+                { answers },
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
             console.log('Submit response:', response);
 
             message.success('Câu trả lời của bạn đã được lưu thành công!');
             setSubmitting(false);
         } catch (error) {
             console.error('Error submitting survey:', error);
-            message.error('Có lỗi xảy ra khi lưu câu trả lời. Vui lòng thử lại sau.');
+            if (error.response?.status === 401) {
+                message.error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
+            } else {
+                message.error('Có lỗi xảy ra khi lưu câu trả lời. Vui lòng thử lại sau.');
+            }
             setSubmitting(false);
         }
     };
@@ -219,47 +238,45 @@ const SmokingSurveyPage = () => {
     }
 
     return (
-        <div className="container mx-auto py-8 px-4">
-            <Card className="shadow-lg rounded-lg">
-                <Title level={2} className="text-center mb-6">Khảo Sát Về Thói Quen Hút Thuốc</Title>
-                <Text className="block mb-8 text-center">
-                    Vui lòng trả lời các câu hỏi dưới đây để chúng tôi có thể hiểu rõ hơn về thói quen hút thuốc của bạn và hỗ trợ bạn hiệu quả hơn trong hành trình cai thuốc.
-                </Text>
+        <div>
+            <Title level={2} className="text-center mb-6">Khảo Sát Về Thói Quen Hút Thuốc</Title>
+            <Text className="block mb-8 text-center">
+                Vui lòng trả lời các câu hỏi dưới đây để chúng tôi có thể hiểu rõ hơn về thói quen hút thuốc của bạn và hỗ trợ bạn hiệu quả hơn trong hành trình cai thuốc.
+            </Text>
 
-                <Form
-                    form={form}
-                    layout="vertical"
-                    onFinish={handleSubmit}
-                    initialValues={userAnswers}
-                    className="max-w-4xl mx-auto"
-                >
-                    {questions.map((question, index) => (
-                        <Form.Item
-                            key={question.QuestionID}
-                            label={
-                                <div className="mb-2">
-                                    <Text strong>{index + 1}. {question.QuestionText}</Text>
-                                </div>
-                            }
-                            name={question.QuestionID.toString()}
-                            rules={[{ required: true, message: 'Vui lòng trả lời câu hỏi này' }]}
-                        >
-                            {renderQuestionInput(question)}
-                        </Form.Item>
-                    ))}
-
-                    <Form.Item className="mt-8 text-center">
-                        <Button
-                            type="primary"
-                            htmlType="submit"
-                            size="large"
-                            loading={submitting}
-                        >
-                            Gửi Câu Trả Lời
-                        </Button>
+            <Form
+                form={form}
+                layout="vertical"
+                onFinish={handleSubmit}
+                initialValues={userAnswers}
+                className="max-w-4xl mx-auto"
+            >
+                {questions.map((question, index) => (
+                    <Form.Item
+                        key={question.QuestionID}
+                        label={
+                            <div className="mb-2">
+                                <Text strong>{index + 1}. {question.QuestionText}</Text>
+                            </div>
+                        }
+                        name={question.QuestionID.toString()}
+                        rules={[{ required: true, message: 'Vui lòng trả lời câu hỏi này' }]}
+                    >
+                        {renderQuestionInput(question)}
                     </Form.Item>
-                </Form>
-            </Card>
+                ))}
+
+                <Form.Item className="mt-8 text-center">
+                    <Button
+                        type="primary"
+                        htmlType="submit"
+                        size="large"
+                        loading={submitting}
+                    >
+                        Gửi Câu Trả Lời
+                    </Button>
+                </Form.Item>
+            </Form>
         </div>
     );
 };

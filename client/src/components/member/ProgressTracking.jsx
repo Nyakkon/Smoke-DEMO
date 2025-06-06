@@ -92,41 +92,75 @@ const ProgressTracking = () => {
             setLoading(true);
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
 
-            const response = await axios.get('http://localhost:4000/api/users/progress', {
+            // Load progress summary data
+            const summaryResponse = await axios.get('http://localhost:4000/api/progress/summary', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
             });
 
-            if (response.data.success) {
-                setProgressData(response.data.data || []);
+            // Load progress range data (last 30 days)
+            const rangeResponse = await axios.get('http://localhost:4000/api/progress/range', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                params: {
+                    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                    endDate: new Date().toISOString().split('T')[0]
+                }
+            });
+
+            // Load streak information
+            const streakResponse = await axios.get('http://localhost:4000/api/progress/streak', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (summaryResponse.data.success) {
+                // Set summary data for stats display
+                const summaryData = summaryResponse.data.data;
+                setSmokingStatus({
+                    totalDaysTracked: summaryData.TotalDaysTracked || 0,
+                    smokeFreeDays: summaryData.SmokeFreeDays || 0,
+                    totalMoneySaved: summaryData.TotalMoneySaved || 0,
+                    averageCravingLevel: summaryData.AverageCravingLevel || 0,
+                    currentStreak: streakResponse.data.success ? streakResponse.data.data.currentStreak || 0 : 0,
+                    longestStreak: streakResponse.data.success ? streakResponse.data.data.longestStreak || 0 : 0,
+                    cigarettesNotSmoked: summaryData.CigarettesNotSmoked || 0,
+                    smokeFreePercentage: summaryData.SmokeFreePercentage || 0
+                });
             }
+
+            if (rangeResponse.data.success) {
+                // Set progress data for charts and daily tracking
+                setProgressData(rangeResponse.data.data || []);
+            }
+
         } catch (error) {
             console.error('Error loading progress data:', error);
-            message.warning('Không thể kết nối server. Hiển thị dữ liệu demo...');
 
-            // Use mock data when server is not available
-            const mockData = [
-                {
-                    Date: new Date().toISOString(),
-                    CigarettesSmoked: 0,
-                    CravingLevel: 3,
-                    EmotionNotes: 'Hôm nay cảm thấy khá tốt, không thèm thuốc nhiều',
-                    MoneySaved: 100000,
-                    DaysSmokeFree: 1,
-                    CreatedAt: new Date().toISOString()
-                },
-                {
-                    Date: new Date(Date.now() - 86400000).toISOString(), // Yesterday
-                    CigarettesSmoked: 2,
-                    CravingLevel: 6,
-                    EmotionNotes: 'Hôm qua còn khó khăn, hút 2 điếu',
-                    MoneySaved: 80000,
-                    DaysSmokeFree: 0,
-                    CreatedAt: new Date(Date.now() - 86400000).toISOString()
-                }
-            ];
-            setProgressData(mockData);
+            // Only show warning if it's a specific permission error
+            if (error.response?.status === 403) {
+                message.warning('Bạn cần có gói dịch vụ được xác nhận để xem tiến trình chi tiết. Hiển thị dữ liệu trống...');
+            } else {
+                message.warning('Không thể kết nối server. Dữ liệu sẽ hiển thị 0 cho đến khi bạn ghi nhận tiến trình đầu tiên...');
+            }
+
+            // Show empty/zero data instead of demo data when no real progress exists
+            setProgressData([]);
+
+            // Set empty smoking status - no fake demo data
+            setSmokingStatus({
+                totalDaysTracked: 0,
+                smokeFreeDays: 0,
+                totalMoneySaved: 0,
+                averageCravingLevel: 0,
+                currentStreak: 0,
+                longestStreak: 0,
+                cigarettesNotSmoked: 0,
+                smokeFreePercentage: 0
+            });
         } finally {
             setLoading(false);
         }
@@ -136,7 +170,7 @@ const ProgressTracking = () => {
         try {
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
 
-            const response = await axios.get('http://localhost:4000/api/achievements/earned', {
+            const response = await axios.get('http://localhost:4000/api/achievements/user', {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -147,24 +181,8 @@ const ProgressTracking = () => {
             }
         } catch (error) {
             console.error('Error loading achievements:', error);
-            // Use mock achievements as fallback
-            const mockAchievements = [
-                {
-                    AchievementID: 1,
-                    Name: 'Ngày đầu tiên',
-                    Description: 'Chúc mừng bạn đã hoàn thành ngày đầu tiên không hút thuốc!',
-                    IconURL: '🏆',
-                    EarnedAt: new Date().toISOString()
-                },
-                {
-                    AchievementID: 2,
-                    Name: 'Tiết kiệm 100K',
-                    Description: 'Bạn đã tiết kiệm được 100,000 VNĐ nhờ việc không hút thuốc!',
-                    IconURL: '💰',
-                    EarnedAt: new Date(Date.now() - 86400000).toISOString()
-                }
-            ];
-            setAchievements(mockAchievements);
+            // Show empty achievements instead of mock data
+            setAchievements([]);
         }
     };
 
@@ -236,13 +254,10 @@ const ProgressTracking = () => {
                 date: values.date.format('YYYY-MM-DD'),
                 cigarettesSmoked: values.cigarettesSmoked || 0,
                 cravingLevel: values.cravingLevel || 1,
-                emotionNotes: values.emotionNotes || '',
-                healthNotes: values.healthNotes || '',
-                moneySaved: calculateMoneySaved(values.cigarettesSmoked || 0),
-                daysSmokeFree: calculateDaysSmokeFree(values.cigarettesSmoked || 0)
+                emotionNotes: values.emotionNotes || ''
             };
 
-            const response = await axios.post('http://localhost:4000/api/users/progress', progressEntry, {
+            const response = await axios.post('http://localhost:4000/api/progress', progressEntry, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -251,6 +266,14 @@ const ProgressTracking = () => {
 
             if (response.data.success) {
                 message.success('Đã thêm dữ liệu tiến trình thành công!');
+
+                // Show achievement notifications if any
+                if (response.data.achievements?.newAchievements?.length > 0) {
+                    response.data.achievements.newAchievements.forEach(achievement => {
+                        message.success(`🏆 Chúc mừng! Bạn đã đạt thành tích: ${achievement.Name}`, 5);
+                    });
+                }
+
                 setIsAddModalVisible(false);
                 addForm.resetFields();
                 loadProgressData();
@@ -260,6 +283,12 @@ const ProgressTracking = () => {
             }
         } catch (error) {
             console.error('Error adding progress:', error);
+
+            if (error.response?.status === 403) {
+                message.error('Bạn cần có gói dịch vụ được xác nhận để ghi nhận tiến trình');
+                return;
+            }
+
             message.warning('Không thể kết nối server. Dữ liệu sẽ được lưu tạm thời...');
 
             // Add to local state when server is not available
@@ -268,7 +297,6 @@ const ProgressTracking = () => {
                 CigarettesSmoked: values.cigarettesSmoked || 0,
                 CravingLevel: values.cravingLevel || 1,
                 EmotionNotes: values.emotionNotes || '',
-                HealthNotes: values.healthNotes || '',
                 MoneySaved: calculateMoneySaved(values.cigarettesSmoked || 0),
                 DaysSmokeFree: calculateDaysSmokeFree(values.cigarettesSmoked || 0),
                 CreatedAt: new Date().toISOString()
@@ -281,12 +309,14 @@ const ProgressTracking = () => {
     };
 
     const calculateMoneySaved = (cigarettesSmoked) => {
-        // Use default values if smoking status is not available
-        const cigarettePrice = smokingStatus?.CigarettePrice || smokingStatus?.cigarettePrice || 5000; // Default 5000 VND per cigarette
-        const cigarettesPerDay = smokingStatus?.CigarettesPerDay || smokingStatus?.cigarettesPerDay || 20; // Default 20 cigarettes per day
+        // Use standard values based on Vietnamese market
+        // Standard: 1 pack = 20 cigarettes = 30,000 VNĐ → 1 cigarette = 1,500 VNĐ
+        // Baseline: Average person smokes at least half pack per day = 10 cigarettes
+        const standardCigarettePrice = smokingStatus?.CigarettePrice || smokingStatus?.cigarettePrice || 1500;
+        const baselineCigarettesPerDay = smokingStatus?.CigarettesPerDay || smokingStatus?.cigarettesPerDay || 10;
 
-        const dailyBudget = cigarettesPerDay * cigarettePrice;
-        const actualSpent = cigarettesSmoked * cigarettePrice;
+        const dailyBudget = baselineCigarettesPerDay * standardCigarettePrice;
+        const actualSpent = cigarettesSmoked * standardCigarettePrice;
         return Math.max(0, dailyBudget - actualSpent);
     };
 
@@ -307,13 +337,31 @@ const ProgressTracking = () => {
     };
 
     const getProgressStats = () => {
+        // Use smokingStatus data if available (from API summary)
+        if (smokingStatus) {
+            return {
+                totalDays: smokingStatus.totalDaysTracked || 0,
+                smokFreeDays: smokingStatus.smokeFreeDays || 0,
+                totalMoneySaved: smokingStatus.totalMoneySaved || 0,
+                averageCraving: smokingStatus.averageCravingLevel || 0,
+                currentStreak: smokingStatus.currentStreak || 0,
+                longestStreak: smokingStatus.longestStreak || 0,
+                cigarettesNotSmoked: smokingStatus.cigarettesNotSmoked || 0,
+                smokeFreePercentage: smokingStatus.smokeFreePercentage || 0
+            };
+        }
+
+        // Fallback to calculating from progressData if smokingStatus is not available
         if (!progressData.length) {
             return {
                 totalDays: 0,
                 smokFreeDays: 0,
                 totalMoneySaved: 0,
                 averageCraving: 0,
-                currentStreak: 0
+                currentStreak: 0,
+                longestStreak: 0,
+                cigarettesNotSmoked: 0,
+                smokeFreePercentage: 0
             };
         }
 
@@ -337,7 +385,10 @@ const ProgressTracking = () => {
             smokFreeDays,
             totalMoneySaved,
             averageCraving: Math.round(averageCraving * 10) / 10,
-            currentStreak
+            currentStreak,
+            longestStreak: currentStreak, // Simple approximation
+            cigarettesNotSmoked: 0, // Would need baseline data to calculate
+            smokeFreePercentage: totalDays > 0 ? (smokFreeDays / totalDays * 100) : 0
         };
     };
 
@@ -461,16 +512,24 @@ const ProgressTracking = () => {
     return (
         <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
             <Row gutter={[24, 24]}>
-                {/* Demo Notice */}
-                {progressData.length > 0 && progressData[0].Date === new Date().toISOString().split('T')[0] && (
+                {/* No Data Notice */}
+                {(!progressData || progressData.length === 0) && (
                     <Col span={24}>
                         <Alert
-                            message="Chế độ Demo"
-                            description="Server chưa khởi động. Dữ liệu hiển thị là dữ liệu mẫu để demo chức năng."
+                            message="Chưa có dữ liệu tiến trình"
+                            description="Bạn chưa ghi nhận tiến trình cai thuốc nào. Hãy bắt đầu bằng cách thêm dữ liệu hôm nay!"
                             type="info"
                             showIcon
-                            closable
                             style={{ marginBottom: '16px' }}
+                            action={
+                                <Button
+                                    size="small"
+                                    type="primary"
+                                    onClick={() => setIsAddModalVisible(true)}
+                                >
+                                    Thêm ngay
+                                </Button>
+                            }
                         />
                     </Col>
                 )}
@@ -498,46 +557,70 @@ const ProgressTracking = () => {
                 </Col>
 
                 {/* Statistics Cards */}
-                <Col xs={24} sm={12} lg={6}>
-                    <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
+                <Col xs={24} sm={12} md={6}>
+                    <Card className="text-center">
+                        <HeartOutlined className="text-2xl text-red-500 mb-2" />
                         <Statistic
-                            title="Tổng số ngày theo dõi"
+                            title="Điếu thuốc tránh được"
+                            value={stats.cigarettesNotSmoked}
+                            valueStyle={{ color: '#cf1322' }}
+                        />
+                        <Text className="text-sm text-gray-500">
+                            {stats.totalDays > 0 && (
+                                <span>Trong {stats.totalDays} ngày theo dõi</span>
+                            )}
+                            {stats.totalDays === 0 && (
+                                <span>Chưa có dữ liệu theo dõi</span>
+                            )}
+                        </Text>
+                    </Card>
+                </Col>
+
+                <Col xs={24} sm={12} md={6}>
+                    <Card className="text-center">
+                        <CalendarOutlined className="text-2xl text-blue-500 mb-2" />
+                        <Statistic
+                            title="Tổng ngày theo dõi"
                             value={stats.totalDays}
-                            prefix={<CalendarOutlined />}
                             valueStyle={{ color: '#1890ff' }}
                         />
+                        <Text className="text-sm text-gray-500">
+                            Ngày smoke-free: {stats.smokFreeDays}
+                        </Text>
                     </Card>
                 </Col>
-                <Col xs={24} sm={12} lg={6}>
-                    <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
-                        <Statistic
-                            title="Ngày không hút thuốc"
-                            value={stats.smokFreeDays}
-                            prefix={<CheckCircleOutlined />}
-                            valueStyle={{ color: '#52c41a' }}
-                        />
-                    </Card>
-                </Col>
-                <Col xs={24} sm={12} lg={6}>
+
+                <Col xs={24} sm={12} md={6}>
                     <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
                         <Statistic
                             title="Tiền tiết kiệm"
                             value={stats.totalMoneySaved}
                             prefix={<DollarOutlined />}
                             valueStyle={{ color: '#52c41a' }}
-                            formatter={(value) => `${value.toLocaleString('vi-VN')} ₫`}
+                            suffix="₫"
                         />
+                        <Text className="text-sm text-gray-500">
+                            {stats.totalDays > 0 && (
+                                <span>Trung bình {Math.round(stats.totalMoneySaved / stats.totalDays).toLocaleString()} ₫/ngày</span>
+                            )}
+                        </Text>
                     </Card>
                 </Col>
-                <Col xs={24} sm={12} lg={6}>
+
+                <Col xs={24} sm={12} md={6}>
                     <Card style={{ textAlign: 'center', borderRadius: '8px' }}>
                         <Statistic
-                            title="Chuỗi không hút hiện tại"
-                            value={stats.currentStreak}
-                            suffix="ngày"
-                            prefix={<TrophyOutlined />}
-                            valueStyle={{ color: '#722ed1' }}
+                            title="Mức thèm trung bình"
+                            value={stats.averageCraving}
+                            suffix="/10"
+                            valueStyle={{
+                                color: stats.averageCraving <= 3 ? '#52c41a' :
+                                    stats.averageCraving <= 6 ? '#faad14' : '#ff4d4f'
+                            }}
                         />
+                        <Text className="text-sm text-gray-500">
+                            Chuỗi hiện tại: {stats.currentStreak} ngày
+                        </Text>
                     </Card>
                 </Col>
 
@@ -816,16 +899,6 @@ const ProgressTracking = () => {
                         <TextArea
                             placeholder="Ví dụ: Hôm nay tôi cảm thấy khó khăn vì stress công việc..."
                             rows={3}
-                        />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="healthNotes"
-                        label="Ghi chú sức khỏe"
-                    >
-                        <TextArea
-                            placeholder="Ví dụ: Hơi thở tươi hơn, ngủ ngon hơn..."
-                            rows={2}
                         />
                     </Form.Item>
 

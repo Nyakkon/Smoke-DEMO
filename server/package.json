@@ -1,5 +1,5 @@
 {
-    "name": "smokeking-server",
+    "name": "server",
     "version": "1.0.0",
     "description": "Backend for SmokingKing cessation app",
     "main": "src/index.js",
@@ -31,7 +31,8 @@
         "multer": "^2.0.0",
         "node-cron": "^3.0.3",
         "node-schedule": "^2.1.1",
-        "nodemailer": "^7.0.3"
+        "nodemailer": "^7.0.3",
+        "xlsx": "^0.18.5"
     },
     "devDependencies": {
         "nodemon": "^3.0.1"

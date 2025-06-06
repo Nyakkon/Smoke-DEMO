@@ -8,18 +8,34 @@ import {
     message,
     Menu,
     Badge,
-    Statistic
+    Statistic,
+    Table,
+    Tag,
+    Space,
+    Button,
+    Empty,
+    Spin
 } from 'antd';
 import {
     CalendarOutlined,
     BarChartOutlined,
     HeartOutlined,
     FireOutlined,
-    DollarOutlined
+    DollarOutlined,
+    ClockCircleOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    EyeOutlined,
+    CreditCardOutlined,
+    FormOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import Appointments from '../components/member/Appointments';
 import ProgressTracking from '../components/member/ProgressTracking';
+import RefundRequests from '../components/member/RefundRequests';
+import MySurvey from '../components/member/MySurvey';
+import SavingsDisplay from '../components/common/SavingsDisplay';
 
 const { Content, Sider } = Layout;
 const { Title, Text } = Typography;
@@ -43,26 +59,110 @@ const MemberDashboard = () => {
     const loadMemberInfo = async () => {
         try {
             setLoading(true);
-            // Get from localStorage or API
             const token = localStorage.getItem('memberToken') || localStorage.getItem('token');
+
             if (!token) {
-                navigate('/auth');
+                message.error('Vui lòng đăng nhập lại');
+                navigate('/login');
                 return;
             }
 
-            // Mock member info - in real app, fetch from API
-            setMemberInfo({
-                id: 1,
-                firstName: 'Nguyễn',
-                lastName: 'Văn A',
-                email: 'member@example.com',
-                avatar: null,
-                smokingStatus: {
-                    daysSinceQuit: 15,
-                    cigarettesAvoided: 150,
-                    moneySaved: 450000
+            let userProfile = null;
+            let progressData = null;
+            let streakData = {};
+
+            // Get user profile
+            try {
+                const profileResponse = await axios.get('http://localhost:4000/api/user/profile', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (profileResponse.data.success) {
+                    userProfile = profileResponse.data.data.userInfo;
                 }
-            });
+            } catch (profileError) {
+                console.error('Failed to load user profile:', profileError.response?.data?.message);
+                // Use fallback user data only if profile fails
+                userProfile = {
+                    id: 1,
+                    firstName: 'Member',
+                    lastName: 'User',
+                    email: 'member@example.com',
+                    avatar: null
+                };
+            }
+
+            // Get progress data 
+            try {
+                const progressResponse = await axios.get('http://localhost:4000/api/progress/summary', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (progressResponse.data.success) {
+                    progressData = progressResponse.data.data;
+                }
+            } catch (progressError) {
+                console.error('Failed to load progress data:', progressError.response?.data?.message);
+                // Set empty progress data if API fails
+                progressData = {
+                    SmokeFreeDays: 0,
+                    CigarettesNotSmoked: 0,
+                    TotalMoneySaved: 0,
+                    TotalDaysTracked: 0
+                };
+            }
+
+            // Get streak information
+            try {
+                const streakResponse = await axios.get('http://localhost:4000/api/progress/streak', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (streakResponse.data.success) {
+                    streakData = streakResponse.data.data;
+                }
+            } catch (streakError) {
+                console.error('Failed to load streak data:', streakError.response?.data?.message);
+                streakData = { currentStreak: 0, longestStreak: 0 };
+            }
+
+            // Set member info with real data
+            if (userProfile && progressData) {
+                setMemberInfo({
+                    id: userProfile.id,
+                    firstName: userProfile.firstName,
+                    lastName: userProfile.lastName,
+                    email: userProfile.email,
+                    avatar: userProfile.avatar,
+                    smokingStatus: {
+                        daysSinceQuit: progressData.SmokeFreeDays || 0,
+                        cigarettesAvoided: progressData.CigarettesNotSmoked || 0,
+                        moneySaved: progressData.TotalMoneySaved || 0,
+                        currentStreak: streakData.currentStreak || 0,
+                        longestStreak: streakData.longestStreak || 0,
+                        totalDaysTracked: progressData.TotalDaysTracked || 0
+                    }
+                });
+            } else {
+                // Only use fallback if both API calls fail
+                console.warn('Using fallback member data - API calls failed');
+                setMemberInfo({
+                    id: 1,
+                    firstName: 'Member',
+                    lastName: 'User',
+                    email: 'member@example.com',
+                    avatar: null,
+                    smokingStatus: {
+                        daysSinceQuit: 0,
+                        cigarettesAvoided: 0,
+                        moneySaved: 0,
+                        currentStreak: 0,
+                        longestStreak: 0,
+                        totalDaysTracked: 0
+                    }
+                });
+            }
+
         } catch (error) {
             console.error('Error loading member info:', error);
             message.error('Không thể tải thông tin thành viên');
@@ -70,8 +170,6 @@ const MemberDashboard = () => {
             setLoading(false);
         }
     };
-
-
 
     const menuItems = [
         {
@@ -84,6 +182,16 @@ const MemberDashboard = () => {
             icon: <BarChartOutlined />,
             label: 'Tiến trình cai thuốc',
         },
+        {
+            key: 'refund',
+            icon: <CreditCardOutlined />,
+            label: 'Yêu cầu hoàn tiền',
+        },
+        {
+            key: 'survey',
+            icon: <FormOutlined />,
+            label: 'Khảo sát',
+        },
     ];
 
     const renderContent = () => {
@@ -92,10 +200,22 @@ const MemberDashboard = () => {
                 return <Appointments />;
             case 'progress':
                 return <ProgressTracking />;
+            case 'refund':
+                return <RefundRequests />;
+            case 'survey':
+                return <MySurvey />;
             default:
                 return <Appointments />;
         }
     };
+
+    if (loading) {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+                <Spin size="large" />
+            </div>
+        );
+    }
 
     return (
         <Layout style={{ minHeight: '100vh' }}>
@@ -127,20 +247,24 @@ const MemberDashboard = () => {
 
                             <Row gutter={[8, 8]}>
                                 <Col span={24}>
-                                    <Statistic
+                                    <SavingsDisplay
                                         title="Điếu thuốc tránh được"
-                                        value={memberInfo.smokingStatus.cigarettesAvoided}
-                                        prefix={<HeartOutlined />}
+                                        displayType="cigarettes"
+                                        showDetails={false}
+                                        style={{ textAlign: 'center' }}
                                         valueStyle={{ color: '#cf1322', fontSize: 16 }}
                                     />
                                 </Col>
                                 <Col span={24}>
-                                    <Statistic
+                                    {/* Use unified SavingsDisplay component */}
+                                    <SavingsDisplay
                                         title="Tiền tiết kiệm"
-                                        value={memberInfo.smokingStatus.moneySaved}
-                                        prefix={<DollarOutlined />}
-                                        suffix="VNĐ"
+                                        displayType="money"
+                                        showDetails={false}
+                                        style={{ textAlign: 'center' }}
                                         valueStyle={{ color: '#389e0d', fontSize: 16 }}
+                                        prefix={<DollarOutlined />}
+                                        suffix="VND"
                                     />
                                 </Col>
                             </Row>

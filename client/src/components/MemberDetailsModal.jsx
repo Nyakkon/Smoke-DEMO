@@ -20,7 +20,7 @@ import {
     WarningOutlined,
     CalendarOutlined,
     FireOutlined,
-    DollarOutlined,
+    WalletOutlined,
     HeartOutlined,
     TrophyOutlined,
     BarChartOutlined
@@ -212,8 +212,8 @@ const MemberDetailsModal = ({
                                                 <Statistic
                                                     title="Tiền tiết kiệm"
                                                     value={memberDetails.statistics.totalMoneySaved}
-                                                    prefix={<DollarOutlined />}
-                                                    suffix="₫"
+                                                    prefix={<WalletOutlined />}
+                                                    suffix=" VNĐ"
                                                     formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
                                                 />
                                             </Col>
@@ -273,7 +273,7 @@ const MemberDetailsModal = ({
                                             <div>Hút: {progress.CigarettesSmoked} điếu</div>
                                             <div>Mức thèm: {progress.CravingLevel}/10</div>
                                             <div>Ngày không hút: {progress.DaysSmokeFree}</div>
-                                            <div>Tiền tiết kiệm: {progress.MoneySaved?.toLocaleString()}₫</div>
+                                            <div>Tiền tiết kiệm: {progress.MoneySaved?.toLocaleString()} VNĐ</div>
                                             {progress.EmotionNotes && (
                                                 <div className="text-gray-600 italic mt-1">&quot;{progress.EmotionNotes}&quot;</div>
                                             )}

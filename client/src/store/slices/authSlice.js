@@ -150,12 +150,12 @@ export const getCurrentUser = createAsyncThunk(
 
             let userProfile;
             try {
-                // First try the enhanced profile endpoint
-                console.log('Attempting to get user profile from /users/profile');
-                const profileResponse = await api.get('/users/profile');
+                // First try the enhanced profile endpoint with CORRECT URL
+                console.log('Attempting to get user profile from /user/profile');
+                const profileResponse = await api.get('/user/profile');
 
                 if (profileResponse.data && profileResponse.data.success) {
-                    console.log('Successfully retrieved user profile from /users/profile');
+                    console.log('Successfully retrieved user profile from /user/profile');
                     const userData = profileResponse.data.data;
 
                     // Early check for inactive account
@@ -193,7 +193,7 @@ export const getCurrentUser = createAsyncThunk(
                     return rejectWithValue('Tài khoản chưa được kích hoạt');
                 }
 
-                console.log('Failed to get profile from /users/profile, trying /auth/me as fallback');
+                console.log('Failed to get profile from /user/profile, trying /auth/me as fallback');
                 // If the profile endpoint fails, fall back to the basic /auth/me endpoint
                 try {
                     const basicResponse = await api.get('/auth/me');

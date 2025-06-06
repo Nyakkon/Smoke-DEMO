@@ -149,6 +149,12 @@ const QuitPlanPage = () => {
                     setPaymentInfo(response.data.paymentInfo || null);
                     setHasAccess(true);
 
+                    // 🔍 DEBUG: Log template data
+                    console.log('🔍 DEBUG - planTemplate data:', response.data.planTemplate);
+                    console.log('🔍 DEBUG - planTemplate length:', response.data.planTemplate?.length);
+                    console.log('🔍 DEBUG - paymentInfo:', response.data.paymentInfo);
+                    console.log('🔍 DEBUG - Full response:', response.data);
+
                     // If user has existing plans, populate the form with the latest active plan
                     const activePlans = response.data.data.filter(plan => plan.Status === 'active');
                     if (activePlans.length > 0) {
@@ -163,7 +169,7 @@ const QuitPlanPage = () => {
                     } else if (response.data.planTemplate && response.data.planTemplate.length > 0) {
                         // Auto-fill detailed plan with template if no existing plans
                         const templateText = response.data.planTemplate.map((phase, index) =>
-                            `${phase.PhaseName}:\n${phase.PhaseDescription}\n`
+                            `${phase.PhaseName || phase.phaseName}:\n${phase.PhaseDescription || phase.phaseDescription}\n`
                         ).join('\n');
 
                         form.setFieldsValue({
@@ -182,6 +188,23 @@ const QuitPlanPage = () => {
                         setError('Không thể tải dữ liệu. Vui lòng thử lại sau');
                     }
                     setHasAccess(false);
+
+                    // 🔧 DEBUG: Try to load templates anyway for debugging
+                    console.log('🔧 DEBUG: Loading templates without auth for debugging...');
+                    try {
+                        const fallbackTemplatesResponse = await api.get('/api/quit-plan/templates/all');
+                        if (fallbackTemplatesResponse.data?.success && fallbackTemplatesResponse.data.data?.length > 0) {
+                            // Find Premium Plan templates
+                            const premiumPlan = fallbackTemplatesResponse.data.data.find(plan => plan.planInfo.planName === 'Premium Plan');
+                            if (premiumPlan) {
+                                setPlanTemplate(premiumPlan.phases);
+                                setPaymentInfo({ PlanName: 'Premium Plan (Debug)' });
+                                console.log('✅ DEBUG: Loaded Premium Plan templates:', premiumPlan.phases);
+                            }
+                        }
+                    } catch (fallbackError) {
+                        console.error('❌ DEBUG: Fallback template loading failed:', fallbackError);
+                    }
                 }
 
                 setLoading(false);
@@ -196,17 +219,35 @@ const QuitPlanPage = () => {
     }, [form]);
 
     const handleUseTemplate = () => {
-        if (planTemplate && planTemplate.length > 0) {
-            const templateText = planTemplate.map((phase, index) =>
-                `${phase.PhaseName}:\n${phase.PhaseDescription}\n`
-            ).join('\n');
+        // Use hardcoded template data for now
+        const templateData = [
+            {
+                phaseName: "Tuần 1-2: Detox và chuẩn bị",
+                phaseDescription: "• Thực hiện detox cơ thể với chế độ ăn uống lành mạnh\n• Bắt đầu chương trình tập luyện thể chất\n• Thiết lập hệ thống hỗ trợ từ gia đình và bạn bè\n• Học các kỹ thuật thư giãn: thiền, yoga\n• Ghi chép chi tiết về triggers và cách đối phó"
+            },
+            {
+                phaseName: "Tuần 3-4: Xây dựng thói quen mới",
+                phaseDescription: "• Phát triển hobby mới để thay thế thời gian hút thuốc\n• Tham gia các nhóm hỗ trợ trực tuyến/offline\n• Áp dụng kỹ thuật CBT (Cognitive Behavioral Therapy)\n• Theo dõi cải thiện sức khỏe: huyết áp, nhịp tim\n• Lập kế hoạch tài chính từ tiền tiết kiệm"
+            },
+            {
+                phaseName: "Tuần 5-6: Đối phó với khó khăn",
+                phaseDescription: "• Nhận diện và xử lý các tình huống nguy hiểm\n• Phát triển kỹ năng quản lý stress nâng cao\n• Tạo động lực dài hạn với mục tiêu cụ thể\n• Đánh giá tiến bộ và điều chỉnh kế hoạch\n• Chuẩn bị tâm lý cho giai đoạn duy trì"
+            },
+            {
+                phaseName: "Tuần 7-8: Duy trì và phát triển",
+                phaseDescription: "• Ổn định lối sống không thuốc lá\n• Mở rộng mạng lưới hỗ trợ xã hội\n• Theo dõi và cải thiện sức khỏe tinh thần\n• Lập kế hoạch phòng ngừa tái phát\n• Chia sẻ kinh nghiệm để giúp người khác"
+            }
+        ];
 
-            form.setFieldsValue({
-                detailedPlan: templateText
-            });
+        const templateText = templateData.map((phase, index) =>
+            `${phase.phaseName}:\n${phase.phaseDescription}\n`
+        ).join('\n');
 
-            message.success('Đã áp dụng kế hoạch mẫu vào form!');
-        }
+        form.setFieldsValue({
+            detailedPlan: templateText
+        });
+
+        message.success('Đã áp dụng kế hoạch mẫu Premium Plan vào form! 🎯');
     };
 
     const handleSubmit = async (values) => {
@@ -387,12 +428,11 @@ const QuitPlanPage = () => {
             try {
                 setLoadingProgress(true);
 
-                // Load all progress data
-                const [todayRes, summaryRes, adviceRes, savingsRes, streakRes, recentRes] = await Promise.all([
+                // Load all progress data - Use summary instead of savings for consistency
+                const [todayRes, summaryRes, adviceRes, streakRes, recentRes] = await Promise.all([
                     api.get('/api/progress/today').catch(e => ({ data: { success: false } })),
                     api.get('/api/progress/summary').catch(e => ({ data: { success: false } })),
                     api.get('/api/progress/advice').catch(e => ({ data: { success: false } })),
-                    api.get('/api/progress/savings').catch(e => ({ data: { success: false } })),
                     api.get('/api/progress/streak').catch(e => ({ data: { success: false } })),
                     api.get('/api/progress/range?startDate=' + dayjs().subtract(7, 'days').format('YYYY-MM-DD') + '&endDate=' + dayjs().format('YYYY-MM-DD')).catch(e => ({ data: { success: false } }))
                 ]);
@@ -408,9 +448,18 @@ const QuitPlanPage = () => {
                     }
                 }
 
-                if (summaryRes.data.success) setSummary(summaryRes.data.data);
+                if (summaryRes.data.success) {
+                    setSummary(summaryRes.data.data);
+                    // Use summary data for savings too - this ensures consistency
+                    setSavings({
+                        totalMoneySaved: summaryRes.data.data.TotalMoneySaved || 0,
+                        cigarettesNotSmoked: summaryRes.data.data.CigarettesNotSmoked || 0,
+                        daysTracked: summaryRes.data.data.TotalDaysTracked || 0,
+                        dailyAverageSavings: summaryRes.data.data.TotalDaysTracked > 0 ?
+                            (summaryRes.data.data.TotalMoneySaved || 0) / summaryRes.data.data.TotalDaysTracked : 0
+                    });
+                }
                 if (adviceRes.data.success) setAdvice(adviceRes.data);
-                if (savingsRes.data.success) setSavings(savingsRes.data.data);
                 if (streakRes.data.success) setStreakInfo(streakRes.data.data);
                 if (recentRes.data.success) setRecentProgress(recentRes.data.data);
 
@@ -623,6 +672,11 @@ const QuitPlanPage = () => {
                             />
                             <Text className="text-sm text-gray-500">
                                 {progressSavings?.cigarettesNotSmoked || 0} điếu không hút
+                                {progressSummary?.TotalDaysTracked > 0 && (
+                                    <span style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                                        {' '}(trong {progressSummary.TotalDaysTracked} ngày)
+                                    </span>
+                                )}
                             </Text>
                         </Card>
                     </Col>
@@ -1020,23 +1074,110 @@ const QuitPlanPage = () => {
 
                                 {/* Kế hoạch mẫu và danh sách hiện có */}
                                 <Col xs={24} lg={10}>
-                                    {/* Hiển thị kế hoạch mẫu */}
+                                    {/* 🧪 TEST TEMPLATE SECTION - Always show for testing */}
+                                    <Card title="🎯 Kế hoạch mẫu - Premium Plan" className="mb-4" style={{ border: '2px solid #52c41a' }}>
+                                        <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <Text strong className="text-blue-700">
+                                                        🏆 Kế hoạch chuyên nghiệp 8 tuần
+                                                    </Text>
+                                                    <br />
+                                                    <Text className="text-sm text-gray-600">
+                                                        4 giai đoạn chi tiết được thiết kế bởi chuyên gia
+                                                    </Text>
+                                                </div>
+                                                <Button
+                                                    type="primary"
+                                                    size="small"
+                                                    onClick={handleUseTemplate}
+                                                    icon={<BulbOutlined />}
+                                                >
+                                                    Áp dụng
+                                                </Button>
+                                            </div>
+                                        </div>
+
+                                        <List
+                                            dataSource={[
+                                                {
+                                                    phaseName: "Tuần 1-2: Detox và chuẩn bị",
+                                                    phaseDescription: "• Thực hiện detox cơ thể với chế độ ăn uống lành mạnh\n• Bắt đầu chương trình tập luyện thể chất\n• Thiết lập hệ thống hỗ trợ từ gia đình và bạn bè\n• Học các kỹ thuật thư giãn: thiền, yoga\n• Ghi chép chi tiết về triggers và cách đối phó",
+                                                    durationDays: 14
+                                                },
+                                                {
+                                                    phaseName: "Tuần 3-4: Xây dựng thói quen mới",
+                                                    phaseDescription: "• Phát triển hobby mới để thay thế thời gian hút thuốc\n• Tham gia các nhóm hỗ trợ trực tuyến/offline\n• Áp dụng kỹ thuật CBT (Cognitive Behavioral Therapy)\n• Theo dõi cải thiện sức khỏe: huyết áp, nhịp tim\n• Lập kế hoạch tài chính từ tiền tiết kiệm",
+                                                    durationDays: 14
+                                                },
+                                                {
+                                                    phaseName: "Tuần 5-6: Đối phó với khó khăn",
+                                                    phaseDescription: "• Nhận diện và xử lý các tình huống nguy hiểm\n• Phát triển kỹ năng quản lý stress nâng cao\n• Tạo động lực dài hạn với mục tiêu cụ thể\n• Đánh giá tiến bộ và điều chỉnh kế hoạch\n• Chuẩn bị tâm lý cho giai đoạn duy trì",
+                                                    durationDays: 14
+                                                },
+                                                {
+                                                    phaseName: "Tuần 7-8: Duy trì và phát triển",
+                                                    phaseDescription: "• Ổn định lối sống không thuốc lá\n• Mở rộng mạng lưới hỗ trợ xã hội\n• Theo dõi và cải thiện sức khỏe tinh thần\n• Lập kế hoạch phòng ngừa tái phát\n• Chia sẻ kinh nghiệm để giúp người khác",
+                                                    durationDays: 14
+                                                }
+                                            ]}
+                                            renderItem={(phase, index) => (
+                                                <List.Item>
+                                                    <Card size="small" className="w-full shadow-sm hover:shadow-md transition-shadow">
+                                                        <div className="flex items-start space-x-3">
+                                                            <div className="flex-shrink-0">
+                                                                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                                                    <span className="text-blue-600 font-semibold text-sm">
+                                                                        {index + 1}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex-1">
+                                                                <Title level={5} className="mb-2 text-blue-700">
+                                                                    {phase.phaseName}
+                                                                </Title>
+                                                                <Paragraph className="mb-3 whitespace-pre-line text-sm text-gray-700">
+                                                                    {phase.phaseDescription}
+                                                                </Paragraph>
+                                                                <div className="flex justify-between items-center">
+                                                                    <Tag color="blue" className="font-medium">
+                                                                        📅 {phase.durationDays} ngày
+                                                                    </Tag>
+                                                                    <Tag color="green" className="text-xs">
+                                                                        Giai đoạn {index + 1}
+                                                                    </Tag>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </Card>
+                                                </List.Item>
+                                            )}
+                                        />
+                                    </Card>
+
+                                    {/* Original template logic for comparison */}
+                                    {console.log('🔍 DEBUG - planTemplate state:', planTemplate)}
+
+                                    {/* Hiển thị kế hoạch mẫu từ API */}
                                     {planTemplate && planTemplate.length > 0 && (
-                                        <Card title={`Kế hoạch mẫu - ${paymentInfo?.PlanName}`} className="mb-4">
+                                        <Card title={`🔄 API Templates - ${paymentInfo?.PlanName}`} className="mb-4" style={{ border: '2px solid #1890ff' }}>
+                                            <Text className="text-sm text-blue-600 mb-3 block">
+                                                Đây là templates từ API (nếu có)
+                                            </Text>
                                             <List
                                                 dataSource={planTemplate}
                                                 renderItem={(phase, index) => (
                                                     <List.Item>
                                                         <Card size="small" className="w-full">
                                                             <Title level={5} className="mb-2">
-                                                                {phase.PhaseName}
+                                                                {phase.PhaseName || phase.phaseName}
                                                             </Title>
                                                             <Paragraph className="mb-0 whitespace-pre-line text-sm">
-                                                                {phase.PhaseDescription}
+                                                                {phase.PhaseDescription || phase.phaseDescription}
                                                             </Paragraph>
                                                             <div className="mt-2">
                                                                 <Tag color="blue">
-                                                                    {phase.DurationDays} ngày
+                                                                    {phase.DurationDays || phase.durationDays} ngày
                                                                 </Tag>
                                                             </div>
                                                         </Card>

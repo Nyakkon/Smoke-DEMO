@@ -143,7 +143,7 @@ const BlogList = () => {
                                 <CardMedia
                                     component="img"
                                     height="220"
-                                    image={post.ThumbnailURL || '/api/images/default-blog.jpg'}
+                                    image={post.ThumbnailURL || '/api/images/default-blog.svg'}
                                     alt={post.Title}
                                     sx={{
                                         borderRadius: '8px 8px 0 0',
@@ -151,7 +151,7 @@ const BlogList = () => {
                                     }}
                                     onError={(e) => {
                                         e.target.onerror = null;
-                                        e.target.src = '/api/images/default-blog.jpg';
+                                        e.target.src = '/api/images/default-blog.svg';
                                     }}
                                 />
                                 <CardContent sx={{ flexGrow: 1, p: 3 }}>

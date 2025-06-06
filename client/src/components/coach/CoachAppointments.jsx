@@ -56,6 +56,7 @@ const CoachAppointments = () => {
         cancelled: 0
     });
     const [form] = Form.useForm();
+    const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
         loadAppointments();
@@ -109,26 +110,38 @@ const CoachAppointments = () => {
 
     const createAppointment = async (values) => {
         try {
-            const token = localStorage.getItem('coachToken');
-            const appointmentDateTime = dayjs(values.appointmentDate).toISOString();
+            setSubmitting(true);
+
+            // First get member's membership info to validate appointment date
+            const membershipResponse = await axios.get(`http://localhost:4000/api/coach/members/${values.memberId}/details`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+            });
+
+            if (membershipResponse.data.success && membershipResponse.data.data.membership) {
+                const membershipEndDate = dayjs(membershipResponse.data.data.membership.endDate);
+                const appointmentDate = dayjs(values.appointmentDate);
+
+                if (appointmentDate.isAfter(membershipEndDate)) {
+                    message.error(`Không thể đặt lịch vào ngày ${appointmentDate.format('DD/MM/YYYY')} vì membership của thành viên hết hạn vào ngày ${membershipEndDate.format('DD/MM/YYYY')}`);
+                    setSubmitting(false);
+                    return;
+                }
+            }
 
             const response = await axios.post('http://localhost:4000/api/coach/schedule', {
-                memberId: parseInt(values.memberId),
-                appointmentDate: appointmentDateTime,
+                memberId: values.memberId,
+                appointmentDate: dayjs(values.appointmentDate).toISOString(),
                 duration: parseInt(values.duration),
                 type: values.type,
                 notes: values.notes || ''
             }, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
 
             if (response.data.success) {
+                message.success('Đặt lịch tư vấn thành công!');
                 setShowCreateModal(false);
                 form.resetFields();
-                message.success('Tạo lịch hẹn thành công! 🎉');
                 loadAppointments();
             }
         } catch (error) {
@@ -138,8 +151,10 @@ const CoachAppointments = () => {
             } else if (error.response?.status === 409) {
                 message.error('Thời gian này đã có lịch hẹn khác. Vui lòng chọn thời gian khác');
             } else {
-                message.error('Không thể tạo lịch hẹn. Vui lòng thử lại sau');
+                message.error('Không thể đặt lịch tư vấn. Vui lòng thử lại sau');
             }
+        } finally {
+            setSubmitting(false);
         }
     };
 

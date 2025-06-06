@@ -491,6 +491,98 @@ app.get('/api/test-templates', async (req, res) => {
     }
 });
 
+// NEW: Debug endpoint to check both PlanTemplates and QuitPlans with DetailedPlan
+app.get('/api/debug-plans', async (req, res) => {
+    try {
+        console.log('🔍 Debug: Checking both PlanTemplates and QuitPlans data...');
+
+        // 1. Check PlanTemplates table
+        const templatesCheck = await pool.request().query(`
+            SELECT COUNT(*) as count FROM PlanTemplates
+        `);
+
+        const templatesData = await pool.request().query(`
+            SELECT 
+                pt.TemplateID,
+                pt.PlanID,
+                pt.PhaseName,
+                pt.PhaseDescription,
+                pt.DurationDays,
+                pt.SortOrder,
+                mp.Name as PlanName
+            FROM PlanTemplates pt
+            JOIN MembershipPlans mp ON pt.PlanID = mp.PlanID
+            ORDER BY pt.PlanID, pt.SortOrder
+        `);
+
+        // 2. Check QuitPlans with DetailedPlan
+        const quitPlansCheck = await pool.request().query(`
+            SELECT COUNT(*) as count FROM QuitPlans WHERE DetailedPlan IS NOT NULL AND DetailedPlan != ''
+        `);
+
+        const quitPlansData = await pool.request().query(`
+            SELECT 
+                qp.PlanID,
+                qp.UserID,
+                qp.Reason,
+                qp.MotivationLevel,
+                CASE 
+                    WHEN qp.DetailedPlan IS NULL THEN 'NULL'
+                    WHEN qp.DetailedPlan = '' THEN 'EMPTY STRING'
+                    WHEN LEN(qp.DetailedPlan) > 100 THEN LEFT(qp.DetailedPlan, 100) + '...'
+                    ELSE qp.DetailedPlan
+                END as DetailedPlanPreview,
+                LEN(qp.DetailedPlan) as DetailedPlanLength,
+                qp.Status,
+                qp.CreatedAt,
+                u.FirstName + ' ' + u.LastName as UserName
+            FROM QuitPlans qp
+            JOIN Users u ON qp.UserID = u.UserID
+            ORDER BY qp.CreatedAt DESC
+        `);
+
+        // 3. Check MembershipPlans
+        const membershipPlans = await pool.request().query(`
+            SELECT PlanID, Name, Description, Price FROM MembershipPlans ORDER BY PlanID
+        `);
+
+        res.header('Access-Control-Allow-Origin', '*');
+        res.json({
+            success: true,
+            data: {
+                planTemplates: {
+                    count: templatesCheck.recordset[0].count,
+                    data: templatesData.recordset,
+                    groupedByPlan: templatesData.recordset.reduce((acc, item) => {
+                        if (!acc[item.PlanName]) acc[item.PlanName] = [];
+                        acc[item.PlanName].push(item.PhaseName);
+                        return acc;
+                    }, {})
+                },
+                quitPlans: {
+                    totalCount: quitPlansData.recordset.length,
+                    withDetailedPlanCount: quitPlansCheck.recordset[0].count,
+                    data: quitPlansData.recordset
+                },
+                membershipPlans: {
+                    count: membershipPlans.recordset.length,
+                    data: membershipPlans.recordset
+                }
+            },
+            message: 'Debug information retrieved successfully',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('❌ Error in debug endpoint:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error retrieving debug information',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
 // Debug endpoint để lấy users có PaymentConfirmations và QuitPlans
 app.get('/api/test-user-data', async (req, res) => {
     try {
@@ -579,14 +671,302 @@ app.get('/api/test-user-data', async (req, res) => {
     }
 });
 
+// Debug endpoint to test assigned coach logic without auth
+app.get('/api/debug/assigned-coach/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        console.log('🔍 Debug assigned coach for userId:', userId);
+
+        // 1. Check if user exists and role
+        const userCheck = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT UserID, Email, FirstName, LastName, Role, IsActive 
+                FROM Users 
+                WHERE UserID = @UserID
+            `);
+
+        console.log('👤 User info:', userCheck.recordset[0]);
+
+        // 2. Check all QuitPlans for this user
+        const allPlans = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    qp.PlanID,
+                    qp.UserID,
+                    qp.CoachID,
+                    qp.Status,
+                    qp.StartDate,
+                    qp.CreatedAt,
+                    c.Email as CoachEmail,
+                    c.FirstName as CoachFirstName,
+                    c.LastName as CoachLastName,
+                    c.IsActive as CoachIsActive,
+                    c.Role as CoachRole
+                FROM QuitPlans qp
+                LEFT JOIN Users c ON qp.CoachID = c.UserID
+                WHERE qp.UserID = @UserID
+                ORDER BY qp.CreatedAt DESC
+            `);
+
+        console.log('📋 All QuitPlans:', allPlans.recordset);
+
+        // 3. Test the exact query used in assigned-coach API
+        const result = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    c.UserID as CoachID,
+                    c.Email as CoachEmail,
+                    c.FirstName as CoachFirstName,
+                    c.LastName as CoachLastName,
+                    c.Avatar as CoachAvatar,
+                    c.PhoneNumber as CoachPhoneNumber,
+                    cp.Bio,
+                    cp.Specialization,
+                    cp.Experience,
+                    cp.HourlyRate,
+                    cp.IsAvailable,
+                    cp.YearsOfExperience,
+                    cp.Education,
+                    cp.Certifications,
+                    cp.Languages,
+                    cp.WorkingHours,
+                    cp.ConsultationTypes,
+                    qp.PlanID as QuitPlanID,
+                    qp.StartDate as AssignmentDate,
+                    qp.Status as QuitPlanStatus,
+                    (SELECT AVG(CAST(Rating AS FLOAT)) FROM CoachFeedback WHERE CoachID = c.UserID AND Status = 'active') as AverageRating,
+                    (SELECT COUNT(*) FROM CoachFeedback WHERE CoachID = c.UserID AND Status = 'active') as ReviewCount
+                FROM QuitPlans qp
+                INNER JOIN Users c ON qp.CoachID = c.UserID
+                LEFT JOIN CoachProfiles cp ON c.UserID = cp.UserID
+                WHERE qp.UserID = @UserID 
+                    AND qp.Status = 'active'
+                    AND qp.CoachID IS NOT NULL
+                    AND c.Role = 'coach'
+                    AND c.IsActive = 1
+            `);
+
+        console.log('📊 Assigned coach query result:', result.recordset);
+
+        res.json({
+            success: true,
+            userId: userId,
+            userInfo: userCheck.recordset[0] || null,
+            allQuitPlans: allPlans.recordset,
+            assignedCoachQuery: result.recordset,
+            resultCount: result.recordset.length,
+            message: result.recordset.length > 0 ? 'Found assigned coach' : 'No assigned coach found'
+        });
+
+    } catch (error) {
+        console.error('❌ Debug error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Debug error',
+            error: error.message
+        });
+    }
+});
+
+// Test endpoint to check all QuitPlans for a user
+app.get('/api/debug/quitplans/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        console.log('🔍 Debug all quit plans for userId:', userId);
+
+        const result = await pool.request()
+            .input('UserID', userId)
+            .query(`
+                SELECT 
+                    qp.PlanID,
+                    qp.UserID,
+                    qp.CoachID,
+                    qp.Status,
+                    qp.StartDate,
+                    qp.CreatedAt,
+                    u.Email as UserEmail,
+                    c.Email as CoachEmail,
+                    c.FirstName as CoachFirstName,
+                    c.LastName as CoachLastName,
+                    c.IsActive as CoachIsActive
+                FROM QuitPlans qp
+                LEFT JOIN Users u ON qp.UserID = u.UserID
+                LEFT JOIN Users c ON qp.CoachID = c.UserID
+                WHERE qp.UserID = @UserID
+                ORDER BY qp.CreatedAt DESC
+            `);
+
+        res.json({
+            success: true,
+            userId: userId,
+            resultCount: result.recordset.length,
+            data: result.recordset,
+            message: `Found ${result.recordset.length} quit plans`
+        });
+
+    } catch (error) {
+        console.error('❌ Debug error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Debug error',
+            error: error.message
+        });
+    }
+});
+
+// Debug endpoint to find Tran Huy user
+app.get('/api/debug/find-user/:searchTerm', async (req, res) => {
+    try {
+        const { searchTerm } = req.params;
+        console.log('🔍 Searching for user:', searchTerm);
+
+        const result = await pool.request()
+            .input('SearchTerm', `%${searchTerm}%`)
+            .query(`
+                SELECT 
+                    UserID,
+                    Email,
+                    FirstName,
+                    LastName,
+                    Role,
+                    IsActive,
+                    CreatedAt
+                FROM Users 
+                WHERE FirstName LIKE @SearchTerm 
+                   OR LastName LIKE @SearchTerm 
+                   OR Email LIKE @SearchTerm
+                ORDER BY CreatedAt DESC
+            `);
+
+        res.json({
+            success: true,
+            searchTerm: searchTerm,
+            resultCount: result.recordset.length,
+            users: result.recordset,
+            message: `Found ${result.recordset.length} users matching "${searchTerm}"`
+        });
+
+    } catch (error) {
+        console.error('❌ Search error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Search error',
+            error: error.message
+        });
+    }
+});
+
+// Debug endpoint to check all assignments
+app.get('/api/debug/all-assignments', async (req, res) => {
+    try {
+        console.log('🔍 Getting all coach assignments...');
+
+        const result = await pool.request().query(`
+            SELECT 
+                qp.PlanID,
+                qp.UserID,
+                qp.CoachID,
+                qp.Status,
+                qp.StartDate,
+                qp.CreatedAt,
+                u.Email as MemberEmail,
+                u.FirstName as MemberFirstName,
+                u.LastName as MemberLastName,
+                c.Email as CoachEmail,
+                c.FirstName as CoachFirstName,
+                c.LastName as CoachLastName,
+                c.IsActive as CoachIsActive
+            FROM QuitPlans qp
+            INNER JOIN Users u ON qp.UserID = u.UserID
+            LEFT JOIN Users c ON qp.CoachID = c.UserID
+            WHERE qp.Status = 'active' AND qp.CoachID IS NOT NULL
+            ORDER BY qp.CreatedAt DESC
+        `);
+
+        res.json({
+            success: true,
+            resultCount: result.recordset.length,
+            assignments: result.recordset,
+            message: `Found ${result.recordset.length} active coach assignments`
+        });
+
+    } catch (error) {
+        console.error('❌ Debug error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Debug error',
+            error: error.message
+        });
+    }
+});
+
+// Debug endpoint to decode token
+app.post('/api/debug/decode-token', async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        if (!token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Token is required'
+            });
+        }
+
+        const jwt = require('jsonwebtoken');
+
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            console.log('🔍 Decoded token:', decoded);
+
+            // Get user from database
+            const userResult = await pool.request()
+                .input('UserID', decoded.id)
+                .query(`
+                    SELECT UserID, Email, FirstName, LastName, Role, IsActive
+                    FROM Users 
+                    WHERE UserID = @UserID
+                `);
+
+            res.json({
+                success: true,
+                tokenValid: true,
+                decoded: decoded,
+                userFromDB: userResult.recordset[0] || null,
+                message: 'Token decoded successfully'
+            });
+
+        } catch (jwtError) {
+            console.log('❌ JWT Error:', jwtError.message);
+            res.json({
+                success: false,
+                tokenValid: false,
+                error: jwtError.message,
+                message: 'Invalid token'
+            });
+        }
+
+    } catch (error) {
+        console.error('❌ Debug token error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Debug error',
+            error: error.message
+        });
+    }
+});
+
 // Routes
 app.use('/api/auth', require('./routes/auth.routes'));
-app.use('/api/users', require('./routes/user.routes'));
+app.use('/api/user', require('./routes/user.routes'));
 app.use('/api/plans', require('./routes/plan.routes'));
 app.use('/api/progress', require('./routes/progress.routes'));
 app.use('/api/achievements', require('./routes/achievement.routes'));
 app.use('/api/coaches', require('./routes/coach.routes'));
 app.use('/api/coach', require('./routes/coach.routes')); // Alias for frontend compatibility
+app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/payments', require('./routes/payment.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/survey', require('./routes/survey.routes'));
@@ -595,12 +975,13 @@ app.use('/api/community', require('./routes/community.routes'));
 app.use('/api/subscriptions', require('./routes/subscription.routes'));
 app.use('/api/smoking-status', require('./routes/smokingStatus.routes'));
 app.use('/api/user-survey', require('./routes/userSurvey.routes'));
-app.use('/api/membership', require('./routes/membershipRoutes'));
-app.use('/api/memberships', require('./routes/membershipRoutes')); // Add alias for client compatibility
+app.use('/api/membership', require('./routes/membership.routes'));
+app.use('/api/memberships', require('./routes/membership.routes')); // Add alias for client compatibility
 app.use('/api/survey-questions', require('./routes/surveyQuestions.routes'));
 app.use('/api/quit-plan', require('./routes/quitPlan.routes'));
 app.use('/api/chat', require('./routes/chat.routes')); // Chat routes with file attachment
 app.use('/api/upload', require('./routes/upload.routes')); // File upload routes
+app.use('/api/images', require('./routes/imageRoutes')); // Image serving routes
 
 // Error handling middleware
 app.use((err, req, res, next) => {

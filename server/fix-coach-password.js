@@ -1,78 +1,51 @@
+const sql = require('mssql');
 const bcrypt = require('bcryptjs');
-const { pool, connectDB } = require('./src/config/database');
+
+const config = {
+    user: 'sa',
+    password: '12345',
+    server: 'localhost',
+    database: 'SMOKEKING',
+    port: 1433,
+    options: {
+        encrypt: false,
+        trustServerCertificate: true
+    }
+};
 
 async function fixCoachPassword() {
     try {
-        console.log('🔧 Fixing coach password...');
+        await sql.connect(config);
+        console.log('🔗 Connected to database');
 
-        // Connect to database
-        await connectDB();
+        // Hash the password "coach123"
+        const hashedPassword = await bcrypt.hash('coach123', 10);
+        console.log('🔒 Hashed password created');
 
-        // Hash the password H12345678@
-        const password = 'H12345678@';
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
+        // Update coach password
+        await sql.query`
+            UPDATE Users 
+            SET PasswordHash = ${hashedPassword}
+            WHERE Email = 'coach@example.com' AND Role = 'coach'
+        `;
 
-        console.log('🔐 Original password:', password);
-        console.log('🔐 Hashed password:', hashedPassword);
+        console.log('✅ Coach password updated to "coach123"');
 
-        // Update coach password in database
-        const result = await pool.request()
-            .input('hashedPassword', hashedPassword)
-            .input('email', 'coach@example.com')
-            .query(`
-                UPDATE Users 
-                SET Password = @hashedPassword, UpdatedAt = GETDATE()
-                WHERE Email = @email AND Role = 'coach'
-            `);
+        // Verify the update
+        const result = await sql.query`
+            SELECT UserID, Email, FirstName, LastName, Role 
+            FROM Users 
+            WHERE Email = 'coach@example.com' AND Role = 'coach'
+        `;
 
-        console.log('✅ Password updated for coach@example.com');
-        console.log('📊 Rows affected:', result.rowsAffected[0]);
+        console.log('👨‍🏫 Coach info:', result.recordset[0]);
 
-        // Verify the update by checking the user
-        const checkResult = await pool.request()
-            .input('email', 'coach@example.com')
-            .query(`
-                SELECT UserID, Email, FirstName, LastName, Role, IsActive, EmailVerified
-                FROM Users 
-                WHERE Email = @email
-            `);
-
-        if (checkResult.recordset.length > 0) {
-            const user = checkResult.recordset[0];
-            console.log('👤 Updated user info:');
-            console.log('   UserID:', user.UserID);
-            console.log('   Email:', user.Email);
-            console.log('   Name:', user.FirstName, user.LastName);
-            console.log('   Role:', user.Role);
-            console.log('   IsActive:', user.IsActive);
-            console.log('   EmailVerified:', user.EmailVerified);
-        }
-
-        // Test password verification
-        const testResult = await pool.request()
-            .input('email', 'coach@example.com')
-            .query(`
-                SELECT Password FROM Users WHERE Email = @email
-            `);
-
-        if (testResult.recordset.length > 0) {
-            const storedPassword = testResult.recordset[0].Password;
-            const isValid = await bcrypt.compare(password, storedPassword);
-            console.log('🔍 Password verification test:', isValid ? '✅ PASSED' : '❌ FAILED');
-        }
-
-        console.log('🎉 Coach password fix completed successfully!');
-        console.log('💡 You can now login with:');
-        console.log('   Email: coach@example.com');
-        console.log('   Password: H12345678@');
+        await sql.close();
+        console.log('🎉 Password update completed!');
 
     } catch (error) {
-        console.error('❌ Error fixing coach password:', error);
-    } finally {
-        process.exit(0);
+        console.error('❌ Error:', error);
     }
 }
 
-// Run the fix
 fixCoachPassword(); 

@@ -275,28 +275,33 @@ const recordLoginAttempt = async (email, ipAddress, success) => {
 };
 
 /**
- * Check for too many failed login attempts
- * @param {string} email - User email
+ * Check for too many failed login attempts (DISABLED)
+ * @param {string} email - Email address
  * @param {string} ipAddress - IP address
- * @returns {Promise<boolean>} - True if too many failed attempts
+ * @returns {Promise<boolean>} - Always returns false (rate limiting disabled)
  */
 const checkFailedLoginAttempts = async (email, ipAddress) => {
     try {
-        // Check for too many failed attempts in the last 30 minutes
-        const result = await executeQuery(
-            `SELECT COUNT(*) AS FailedCount 
-             FROM LoginAttempts 
-             WHERE (Email = @Email OR IPAddress = @IPAddress)
-             AND Success = 0
-             AND AttemptTime > DATEADD(MINUTE, -30, GETDATE())`,
-            {
-                Email: email,
-                IPAddress: ipAddress
-            }
-        );
+        // DISABLED: Rate limiting has been disabled
+        // Original logic checked for 5 failed attempts in 30 minutes
+        console.log('Rate limiting check disabled - allowing login attempt');
+        return false; // Always allow login attempts
 
-        const failedCount = result.recordset[0].FailedCount;
-        return failedCount >= 5; // Limit to 5 failed attempts in 30 minutes
+        // Original code (commented out):
+        // const result = await executeQuery(
+        //     `SELECT COUNT(*) AS FailedCount 
+        //      FROM LoginAttempts 
+        //      WHERE (Email = @Email OR IPAddress = @IPAddress)
+        //      AND Success = 0
+        //      AND AttemptTime > DATEADD(MINUTE, -30, GETDATE())`,
+        //     {
+        //         Email: email,
+        //         IPAddress: ipAddress
+        //     }
+        // );
+        //
+        // const failedCount = result.recordset[0].FailedCount;
+        // return failedCount >= 5; // Limit to 5 failed attempts in 30 minutes
     } catch (error) {
         console.error('Error checking failed login attempts:', error);
         return false; // Default to allowing login if check fails

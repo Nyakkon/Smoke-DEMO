@@ -34,7 +34,12 @@ export const createBlogPost = createAsyncThunk(
             const response = await axios.post('/api/blog', postData, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            return response.data.data;
+            // Return both the post data and the status/message for notification
+            return {
+                post: response.data.data,
+                status: response.data.status,
+                message: response.data.message
+            };
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Error creating blog post');
         }
@@ -174,8 +179,8 @@ const blogSlice = createSlice({
             })
             .addCase(createBlogPost.fulfilled, (state, action) => {
                 state.loading = false;
-                state.posts.unshift(action.payload);
-                state.userPosts.unshift(action.payload);
+                state.posts.unshift(action.payload.post);
+                state.userPosts.unshift(action.payload.post);
                 state.success = true;
             })
             .addCase(createBlogPost.rejected, (state, action) => {

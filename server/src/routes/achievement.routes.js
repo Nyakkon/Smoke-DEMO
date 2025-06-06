@@ -3,10 +3,15 @@ const router = express.Router();
 const { protect, authorize } = require('../middleware/auth.middleware');
 const { pool } = require('../config/database');
 const AchievementService = require('../services/achievementService');
+const sql = require('mssql');
 
 // Get all achievements with user's earned status
 router.get('/', protect, async (req, res) => {
     try {
+        // Get user's progress data to check eligibility
+        const progressData = await AchievementService.getUserProgressData(req.user.UserID);
+        const userPlan = await AchievementService.getUserMembershipPlan(req.user.UserID);
+
         const result = await pool.request()
             .input('UserID', req.user.UserID)
             .query(`
@@ -21,9 +26,40 @@ router.get('/', protect, async (req, res) => {
                 ORDER BY a.Category, a.Difficulty
             `);
 
+        // Add eligibility check for each achievement
+        const achievementsWithEligibility = result.recordset.map(achievement => {
+            let isEligible = false;
+
+            // Check milestone days
+            if (achievement.MilestoneDays !== null) {
+                isEligible = progressData.SmokeFreeDays >= achievement.MilestoneDays;
+            }
+
+            // Check saved money
+            if (achievement.SavedMoney !== null) {
+                isEligible = progressData.TotalMoneySaved >= achievement.SavedMoney;
+            }
+
+            // If no specific requirements, consider eligible
+            if (achievement.MilestoneDays === null && achievement.SavedMoney === null) {
+                isEligible = true;
+            }
+
+            return {
+                ...achievement,
+                IsEligible: isEligible ? 1 : 0,
+                // Progress towards this achievement
+                Progress: achievement.MilestoneDays
+                    ? Math.min(progressData.SmokeFreeDays / achievement.MilestoneDays * 100, 100)
+                    : achievement.SavedMoney
+                        ? Math.min(progressData.TotalMoneySaved / achievement.SavedMoney * 100, 100)
+                        : 100
+            };
+        });
+
         res.json({
             success: true,
-            data: result.recordset
+            data: achievementsWithEligibility
         });
     } catch (error) {
         console.error(error);
@@ -37,10 +73,19 @@ router.get('/', protect, async (req, res) => {
 // Get user's earned achievements
 router.get('/earned', protect, async (req, res) => {
     try {
+        // Set cache control headers to prevent 304 responses
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'Last-Modified': new Date().toUTCString()
+        });
+
         const achievements = await AchievementService.getUserAchievements(req.user.UserID);
 
-        res.json({
+        res.status(200).json({
             success: true,
+            timestamp: new Date().toISOString(),
             data: achievements
         });
     } catch (error) {
@@ -103,6 +148,14 @@ router.post('/progress-update', protect, async (req, res) => {
 // Get achievement statistics
 router.get('/stats', protect, async (req, res) => {
     try {
+        // Set cache control headers to prevent 304 responses
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'Last-Modified': new Date().toUTCString()
+        });
+
         const result = await pool.request()
             .input('UserID', req.user.UserID)
             .query(`
@@ -124,8 +177,9 @@ router.get('/stats', protect, async (req, res) => {
             ? Math.round((stats.EarnedCount / stats.TotalAchievements) * 100)
             : 0;
 
-        res.json({
+        res.status(200).json({
             success: true,
+            timestamp: new Date().toISOString(),
             data: {
                 ...stats,
                 CompletionRate: completionRate
@@ -173,7 +227,9 @@ router.get('/categories/:category', protect, async (req, res) => {
     }
 });
 
-// PUBLIC endpoint: Get all achievements without authentication (for display purposes)
+// ==================== ADMIN ENDPOINTS ====================
+
+// Get all achievements (public - for admin interface)
 router.get('/public', async (req, res) => {
     try {
         const result = await pool.request().query(`
@@ -185,12 +241,11 @@ router.get('/public', async (req, res) => {
                 Category,
                 MilestoneDays,
                 SavedMoney,
-                RequiredPlan,
-                Difficulty,
-                Points
+                Points,
+                IsActive,
+                CreatedAt
             FROM Achievements
-            WHERE IsActive = 1
-            ORDER BY Category, Difficulty
+            ORDER BY Category, AchievementID
         `);
 
         res.json({
@@ -201,205 +256,281 @@ router.get('/public', async (req, res) => {
         console.error('Error getting public achievements:', error);
         res.status(500).json({
             success: false,
-            message: 'Error getting achievements',
-            error: error.message
+            message: 'Lỗi khi tải danh sách thành tích'
         });
     }
 });
-
-// === ADMIN ONLY ROUTES ===
 
 // Create new achievement (admin only)
 router.post('/', protect, authorize('admin'), async (req, res) => {
     try {
-        const {
-            name, description, iconUrl, category,
-            milestoneDays, savedMoney, requiredPlan,
-            difficulty, points
-        } = req.body;
+        const { name, description, category, points, iconURL, isActive, milestoneDays, savedMoney } = req.body;
 
+        // Validate required fields
+        if (!name || !description || !category || points === undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng nhập đầy đủ thông tin: tên, mô tả, danh mục và điểm thưởng'
+            });
+        }
+
+        // Check if achievement name already exists
+        const existingResult = await pool.request()
+            .input('Name', name)
+            .query('SELECT AchievementID FROM Achievements WHERE Name = @Name');
+
+        if (existingResult.recordset.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Tên thành tích đã tồn tại'
+            });
+        }
+
+        // Create new achievement
         const result = await pool.request()
             .input('Name', name)
             .input('Description', description)
-            .input('IconURL', iconUrl)
             .input('Category', category)
+            .input('Points', points)
+            .input('IconURL', iconURL || '🏆')
+            .input('IsActive', isActive !== undefined ? isActive : true)
             .input('MilestoneDays', milestoneDays)
             .input('SavedMoney', savedMoney)
-            .input('RequiredPlan', requiredPlan)
-            .input('Difficulty', difficulty)
-            .input('Points', points)
             .query(`
-                INSERT INTO Achievements (
-                    Name, Description, IconURL, Category, MilestoneDays, 
-                    SavedMoney, RequiredPlan, Difficulty, Points, IsActive, CreatedAt
-                )
+                INSERT INTO Achievements (Name, Description, Category, Points, IconURL, IsActive, MilestoneDays, SavedMoney)
                 OUTPUT INSERTED.*
-                VALUES (
-                    @Name, @Description, @IconURL, @Category, @MilestoneDays, 
-                    @SavedMoney, @RequiredPlan, @Difficulty, @Points, 1, GETDATE()
-                )
+                VALUES (@Name, @Description, @Category, @Points, @IconURL, @IsActive, @MilestoneDays, @SavedMoney)
             `);
 
         res.status(201).json({
             success: true,
-            data: result.recordset[0]
+            data: result.recordset[0],
+            message: 'Tạo thành tích thành công'
         });
+
     } catch (error) {
-        console.error(error);
+        console.error('Error creating achievement:', error);
         res.status(500).json({
             success: false,
-            message: 'Error creating achievement'
+            message: 'Lỗi khi tạo thành tích: ' + error.message
         });
     }
 });
 
-// Award achievement to user (admin only)
-router.post('/award', protect, authorize('admin'), async (req, res) => {
+// Update achievement (admin only)
+router.put('/:id', protect, authorize('admin'), async (req, res) => {
     try {
-        const { userId, achievementId } = req.body;
+        const { id } = req.params;
+        const { name, description, category, points, iconURL, isActive, milestoneDays, savedMoney } = req.body;
 
-        await AchievementService.awardAchievement(userId, achievementId);
+        // Validate achievement ID
+        if (!id || isNaN(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID thành tích không hợp lệ'
+            });
+        }
+
+        // Validate required fields
+        if (!name || !description || !category || points === undefined) {
+            return res.status(400).json({
+                success: false,
+                message: 'Vui lòng nhập đầy đủ thông tin: tên, mô tả, danh mục và điểm thưởng'
+            });
+        }
+
+        // Check if achievement exists
+        const existingResult = await pool.request()
+            .input('AchievementID', id)
+            .query('SELECT AchievementID FROM Achievements WHERE AchievementID = @AchievementID');
+
+        if (existingResult.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thành tích'
+            });
+        }
+
+        // Check if new name conflicts with other achievements
+        const nameConflictResult = await pool.request()
+            .input('Name', name)
+            .input('AchievementID', id)
+            .query('SELECT AchievementID FROM Achievements WHERE Name = @Name AND AchievementID != @AchievementID');
+
+        if (nameConflictResult.recordset.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Tên thành tích đã tồn tại'
+            });
+        }
+
+        // Update achievement
+        const result = await pool.request()
+            .input('AchievementID', id)
+            .input('Name', name)
+            .input('Description', description)
+            .input('Category', category)
+            .input('Points', points)
+            .input('IconURL', iconURL || '🏆')
+            .input('IsActive', isActive !== undefined ? isActive : true)
+            .input('MilestoneDays', milestoneDays)
+            .input('SavedMoney', savedMoney)
+            .query(`
+                UPDATE Achievements 
+                SET Name = @Name,
+                    Description = @Description,
+                    Category = @Category,
+                    Points = @Points,
+                    IconURL = @IconURL,
+                    IsActive = @IsActive,
+                    MilestoneDays = @MilestoneDays,
+                    SavedMoney = @SavedMoney
+                OUTPUT INSERTED.*
+                WHERE AchievementID = @AchievementID
+            `);
+
+        if (result.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không thể cập nhật thành tích'
+            });
+        }
 
         res.json({
             success: true,
-            message: 'Achievement awarded successfully'
+            data: result.recordset[0],
+            message: 'Cập nhật thành tích thành công'
         });
+
     } catch (error) {
-        console.error(error);
+        console.error('Error updating achievement:', error);
         res.status(500).json({
             success: false,
-            message: 'Error awarding achievement'
+            message: 'Lỗi khi cập nhật thành tích: ' + error.message
         });
     }
 });
 
-// Check achievements for any user (admin only)
-router.post('/check/:userId', protect, authorize('admin'), async (req, res) => {
+// Delete achievement (admin only)
+router.delete('/:id', protect, authorize('admin'), async (req, res) => {
     try {
-        const { userId } = req.params;
-        const result = await AchievementService.checkAndAwardAchievements(parseInt(userId));
+        const { id } = req.params;
 
-        res.json(result);
+        // Validate achievement ID
+        if (!id || isNaN(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID thành tích không hợp lệ'
+            });
+        }
+
+        // Check if achievement exists
+        const existingResult = await pool.request()
+            .input('AchievementID', id)
+            .query('SELECT AchievementID, Name FROM Achievements WHERE AchievementID = @AchievementID');
+
+        if (existingResult.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thành tích'
+            });
+        }
+
+        const achievement = existingResult.recordset[0];
+
+        // Check if achievement is being used by users
+        const usageResult = await pool.request()
+            .input('AchievementID', id)
+            .query('SELECT COUNT(*) as UsageCount FROM UserAchievements WHERE AchievementID = @AchievementID');
+
+        const usageCount = usageResult.recordset[0].UsageCount;
+
+        if (usageCount > 0) {
+            return res.status(400).json({
+                success: false,
+                message: `Không thể xóa thành tích "${achievement.Name}" vì có ${usageCount} người dùng đã đạt được thành tích này. Hãy vô hiệu hóa thay vì xóa.`
+            });
+        }
+
+        // Delete achievement
+        await pool.request()
+            .input('AchievementID', id)
+            .query('DELETE FROM Achievements WHERE AchievementID = @AchievementID');
+
+        res.json({
+            success: true,
+            message: `Xóa thành tích "${achievement.Name}" thành công`
+        });
+
     } catch (error) {
-        console.error(error);
+        console.error('Error deleting achievement:', error);
         res.status(500).json({
             success: false,
-            message: 'Error checking user achievements'
+            message: 'Lỗi khi xóa thành tích: ' + error.message
         });
     }
 });
 
-// Manual fix achievements endpoint
-router.post('/fix-unlock', protect, async (req, res) => {
+// Clear user's achievements (for testing)
+router.post('/clear-my-achievements', protect, async (req, res) => {
     try {
-        console.log('🔓 Manual achievement fix requested by user:', req.user.UserID);
+        console.log('🗑️ Clearing achievements for user:', req.user.UserID);
 
-        // Get user's progress data
-        const progressResult = await pool.request()
+        const result = await pool.request()
             .input('UserID', req.user.UserID)
-            .query(`
-                SELECT 
-                    COALESCE(MAX(DaysSmokeFree), 0) as DaysSmokeFree,
-                    COALESCE(SUM(MoneySaved), 0) as TotalMoneySaved,
-                    COUNT(*) as ProgressEntries
-                FROM ProgressTracking 
-                WHERE UserID = @UserID
-            `);
+            .query('DELETE FROM UserAchievements WHERE UserID = @UserID');
 
-        const progressData = progressResult.recordset[0];
-        console.log('User progress:', progressData);
+        res.json({
+            success: true,
+            message: `Đã xóa ${result.rowsAffected[0]} huy hiệu. Bây giờ chỉ những huy hiệu đủ điều kiện mới có thể mở khóa.`,
+            clearedCount: result.rowsAffected[0]
+        });
+    } catch (error) {
+        console.error('❌ Error clearing achievements:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi xóa achievements: ' + error.message
+        });
+    }
+});
 
-        // If no progress data, create basic entry
-        if (progressData.ProgressEntries === 0) {
-            console.log('Creating basic progress entry for user...');
+// Debug endpoint to update achievements to use emojis
+router.post('/update-emojis', async (req, res) => {
+    try {
+        const pool = await sql.connect();
 
+        // Update achievements to use emojis instead of image paths
+        const updates = [
+            { id: 1, emoji: '🏆' }, // Ngày đầu tiên
+            { id: 2, emoji: '⭐' }, // Tuần lễ khởi đầu
+            { id: 3, emoji: '👑' }, // Tháng đầu tiên
+            { id: 4, emoji: '💎' }, // Quý đầu tiên
+            { id: 5, emoji: '💰' }, // Tiết kiệm 100K
+            { id: 6, emoji: '💵' }, // Tiết kiệm 500K
+            { id: 7, emoji: '🤑' }  // Tiết kiệm 1 triệu
+        ];
+
+        for (const update of updates) {
             await pool.request()
-                .input('UserID', req.user.UserID)
-                .input('Date', new Date().toISOString().split('T')[0])
-                .input('DaysSmokeFree', 1)
-                .input('MoneySaved', 50000)
-                .input('CigarettesSmoked', 0)
-                .input('CravingLevel', 5)
-                .query(`
-                    INSERT INTO ProgressTracking (UserID, Date, DaysSmokeFree, MoneySaved, CigarettesSmoked, CravingLevel, CreatedAt)
-                    VALUES (@UserID, @Date, @DaysSmokeFree, @MoneySaved, @CigarettesSmoked, @CravingLevel, GETDATE())
-                `);
-
-            progressData.DaysSmokeFree = 1;
-            progressData.TotalMoneySaved = 50000;
+                .input('id', sql.Int, update.id)
+                .input('emoji', sql.NVarChar, update.emoji)
+                .query('UPDATE Achievements SET IconURL = @emoji WHERE AchievementID = @id');
         }
 
-        // Get achievements user doesn't have yet
-        const availableAchievements = await pool.request()
-            .input('UserID', req.user.UserID)
-            .query(`
-                SELECT a.*
-                FROM Achievements a
-                WHERE a.AchievementID NOT IN (
-                    SELECT AchievementID 
-                    FROM UserAchievements 
-                    WHERE UserID = @UserID
-                )
-                ORDER BY a.AchievementID
-            `);
-
-        const newAchievements = [];
-
-        // Check each achievement
-        for (const achievement of availableAchievements.recordset) {
-            let shouldUnlock = false;
-
-            // Check milestone days
-            if (achievement.MilestoneDays !== null) {
-                if (progressData.DaysSmokeFree >= achievement.MilestoneDays) {
-                    shouldUnlock = true;
-                    console.log(`User qualifies for "${achievement.Name}" (${achievement.MilestoneDays} days)`);
-                }
-            }
-
-            // Check saved money
-            if (achievement.SavedMoney !== null) {
-                if (progressData.TotalMoneySaved >= achievement.SavedMoney) {
-                    shouldUnlock = true;
-                    console.log(`User qualifies for "${achievement.Name}" (${achievement.SavedMoney} VND)`);
-                }
-            }
-
-            // Award achievement
-            if (shouldUnlock) {
-                try {
-                    await pool.request()
-                        .input('UserID', req.user.UserID)
-                        .input('AchievementID', achievement.AchievementID)
-                        .query(`
-                            INSERT INTO UserAchievements (UserID, AchievementID, EarnedAt)
-                            VALUES (@UserID, @AchievementID, GETDATE())
-                        `);
-
-                    newAchievements.push(achievement);
-                    console.log(`🏆 UNLOCKED: ${achievement.Name}`);
-                } catch (error) {
-                    if (!error.message.includes('duplicate')) {
-                        console.error(`Error unlocking "${achievement.Name}":`, error.message);
-                    }
-                }
-            }
-        }
+        // Verify the updates
+        const result = await pool.request().query('SELECT AchievementID, Name, IconURL FROM Achievements ORDER BY AchievementID');
 
         res.json({
             success: true,
-            message: newAchievements.length > 0
-                ? `Đã mở khóa ${newAchievements.length} huy hiệu mới!`
-                : 'Không có huy hiệu mới để mở khóa.',
-            newAchievements,
-            progressData
+            message: 'Achievements updated to use emojis',
+            data: result.recordset
         });
 
     } catch (error) {
-        console.error('Error fixing achievements:', error);
+        console.error('Error updating achievement emojis:', error);
         res.status(500).json({
             success: false,
-            message: 'Lỗi khi kiểm tra huy hiệu'
+            message: 'Lỗi khi cập nhật emoji huy hiệu: ' + error.message
         });
     }
 });

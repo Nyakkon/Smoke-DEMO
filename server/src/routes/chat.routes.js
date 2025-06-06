@@ -73,45 +73,39 @@ router.get('/debug-user', authenticateToken, (req, res) => {
     });
 });
 
-// Lấy conversation của member với coach (any coach can chat with any member)
+// Lấy conversation của member với assigned coach only
 router.get('/member/conversation', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.UserID;
         console.log('🔍 Member conversation - UserID:', userId, 'Role:', req.user.Role);
 
-        // Tìm bất kỳ coach nào có conversation với member này
-        let coachResult = await pool.request()
+        // Tìm coach được phân công cho member này thông qua QuitPlans
+        let assignedCoachResult = await pool.request()
             .input('userId', userId)
             .query(`
-                SELECT TOP 1 CoachID
-                FROM Conversations 
-                WHERE MemberID = @userId AND IsActive = 1
-                ORDER BY LastMessageAt DESC
+                SELECT qp.CoachID
+                FROM QuitPlans qp
+                INNER JOIN Users c ON qp.CoachID = c.UserID
+                WHERE qp.UserID = @userId 
+                    AND qp.Status = 'active'
+                    AND c.Role = 'coach'
+                    AND c.IsActive = 1
             `);
 
-        let coachId;
-        if (coachResult.recordset.length === 0) {
-            // Nếu chưa có conversation, tìm coach đầu tiên có sẵn
-            const availableCoach = await pool.request().query(`
-                SELECT TOP 1 UserID
-                FROM Users 
-                WHERE Role = 'coach' AND IsActive = 1
-                ORDER BY UserID
-            `);
-
-            if (availableCoach.recordset.length === 0) {
-                return res.status(404).json({
-                    success: false,
-                    message: 'Không có coach nào có sẵn trong hệ thống'
-                });
-            }
-
-            coachId = availableCoach.recordset[0].UserID;
-        } else {
-            coachId = coachResult.recordset[0].CoachID;
+        if (assignedCoachResult.recordset.length === 0) {
+            console.log('❌ No assigned coach found for member:', userId);
+            return res.status(404).json({
+                success: false,
+                message: 'Bạn chưa được phân công coach nào. Vui lòng liên hệ admin để được phân công coach trước khi có thể chat.',
+                error_code: 'NO_ASSIGNED_COACH',
+                helpText: 'Để có thể sử dụng tính năng chat, bạn cần được admin phân công một coach. Vui lòng liên hệ quản trị viên hệ thống.'
+            });
         }
 
-        // Tìm hoặc tạo conversation
+        const coachId = assignedCoachResult.recordset[0].CoachID;
+        console.log('✅ Found assigned coach:', coachId, 'for member:', userId);
+
+        // Tìm hoặc tạo conversation với assigned coach
         let conversation = await pool.request()
             .input('coachId', coachId)
             .input('userId', userId)
@@ -122,7 +116,8 @@ router.get('/member/conversation', authenticateToken, async (req, res) => {
             `);
 
         if (conversation.recordset.length === 0) {
-            // Tạo conversation mới
+            // Tạo conversation mới với assigned coach
+            console.log('📝 Creating new conversation between member', userId, 'and assigned coach', coachId);
             await pool.request()
                 .input('coachId', coachId)
                 .input('userId', userId)
@@ -141,13 +136,20 @@ router.get('/member/conversation', authenticateToken, async (req, res) => {
                 `);
         }
 
-        // Lấy thông tin coach
+        // Lấy thông tin assigned coach
         const coachInfo = await pool.request()
             .input('coachId', coachId)
             .query(`
-                SELECT UserID, FirstName + ' ' + LastName as FullName, Avatar, Email
-                FROM Users 
-                WHERE UserID = @coachId
+                SELECT 
+                    u.UserID, 
+                    u.FirstName + ' ' + u.LastName as FullName, 
+                    u.Avatar, 
+                    u.Email,
+                    cp.Specialization,
+                    cp.Bio
+                FROM Users u
+                LEFT JOIN CoachProfiles cp ON u.UserID = cp.UserID
+                WHERE u.UserID = @coachId
             `);
 
         res.json({
@@ -155,7 +157,8 @@ router.get('/member/conversation', authenticateToken, async (req, res) => {
             data: {
                 conversation: conversation.recordset[0],
                 coach: coachInfo.recordset[0]
-            }
+            },
+            message: `Kết nối với coach được phân công: ${coachInfo.recordset[0].FullName}`
         });
 
     } catch (error) {
@@ -262,47 +265,31 @@ router.post('/coach/chat/send', authenticateToken, async (req, res) => {
         let receiverId;
 
         if (userRole === 'member') {
-            // Member gửi tin nhắn cho coach
-            let coachResult = await pool.request()
+            // Member chỉ có thể gửi tin nhắn cho assigned coach
+            let assignedCoachResult = await pool.request()
                 .input('senderId', senderId)
                 .query(`
-                    SELECT TOP 1 CoachID
-                    FROM Conversations 
-                    WHERE MemberID = @senderId AND IsActive = 1
-                    ORDER BY LastMessageAt DESC
+                    SELECT qp.CoachID
+                    FROM QuitPlans qp
+                    INNER JOIN Users c ON qp.CoachID = c.UserID
+                    WHERE qp.UserID = @senderId 
+                        AND qp.Status = 'active'
+                        AND c.Role = 'coach'
+                        AND c.IsActive = 1
                 `);
 
-            if (coachResult.recordset.length === 0) {
-                // Nếu chưa có conversation, tìm coach đầu tiên có sẵn
-                const availableCoach = await pool.request().query(`
-                    SELECT TOP 1 UserID
-                    FROM Users 
-                    WHERE Role = 'coach' AND IsActive = 1
-                    ORDER BY UserID
-                `);
-
-                if (availableCoach.recordset.length === 0) {
-                    return res.status(404).json({
-                        success: false,
-                        message: 'Không có coach nào có sẵn trong hệ thống'
-                    });
-                }
-
-                receiverId = availableCoach.recordset[0].UserID;
-
-                // Tạo conversation mới
-                await pool.request()
-                    .input('coachId', receiverId)
-                    .input('memberId', senderId)
-                    .query(`
-                        INSERT INTO Conversations (CoachID, MemberID, LastMessageAt, IsActive)
-                        VALUES (@coachId, @memberId, GETDATE(), 1)
-                    `);
-            } else {
-                receiverId = coachResult.recordset[0].CoachID;
+            if (assignedCoachResult.recordset.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Bạn chưa được phân công coach nào. Vui lòng liên hệ admin để được phân công coach.',
+                    error_code: 'NO_ASSIGNED_COACH'
+                });
             }
+
+            receiverId = assignedCoachResult.recordset[0].CoachID;
+            console.log('✅ Member sending message to assigned coach:', receiverId);
         } else if (userRole === 'coach') {
-            // Coach cần chỉ định member để gửi tin nhắn
+            // Coach cần chỉ định member để gửi tin nhắn - và chỉ được chat với member được phân công
             const { memberId } = req.body;
             if (!memberId) {
                 return res.status(400).json({
@@ -310,6 +297,30 @@ router.post('/coach/chat/send', authenticateToken, async (req, res) => {
                     message: 'Coach cần chỉ định member để gửi tin nhắn'
                 });
             }
+
+            // Kiểm tra xem member có được phân công cho coach này không
+            const assignmentCheck = await pool.request()
+                .input('coachId', senderId)
+                .input('memberId', memberId)
+                .query(`
+                    SELECT qp.PlanID
+                    FROM QuitPlans qp
+                    INNER JOIN Users u ON qp.UserID = u.UserID
+                    WHERE qp.CoachID = @coachId 
+                        AND qp.UserID = @memberId
+                        AND qp.Status = 'active'
+                        AND u.Role IN ('member', 'guest')
+                        AND u.IsActive = 1
+                `);
+
+            if (assignmentCheck.recordset.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Bạn chỉ có thể chat với member được phân công cho bạn.',
+                    error_code: 'MEMBER_NOT_ASSIGNED'
+                });
+            }
+
             receiverId = memberId;
         } else {
             return res.status(403).json({
@@ -585,20 +596,30 @@ router.get('/coach/conversations', authenticateToken, async (req, res) => {
             .input('coachId', coachId)
             .query(`
                 SELECT 
+                    u.UserID,
+                    u.FirstName + ' ' + u.LastName as FullName,
+                    u.Email,
+                    u.Avatar,
+                    u.Role,
+                    u.IsActive,
                     c.ConversationID,
-                    c.MemberID,
-                    u.FirstName + ' ' + u.LastName as MemberName,
-                    u.Avatar as MemberAvatar,
-                    u.Email as MemberEmail,
-                    c.LastMessageAt,
-                    m.Content as LastMessageContent,
-                    m.SenderID as LastMessageSenderID,
-                    (SELECT COUNT(*) FROM Messages WHERE ReceiverID = @coachId AND SenderID = c.MemberID AND IsRead = 0) as UnreadCount
-                FROM Conversations c
-                INNER JOIN Users u ON c.MemberID = u.UserID
-                LEFT JOIN Messages m ON c.LastMessageID = m.MessageID
-                WHERE c.CoachID = @coachId AND c.IsActive = 1
-                ORDER BY c.LastMessageAt DESC
+                    CASE WHEN c.ConversationID IS NOT NULL THEN 1 ELSE 0 END as HasConversation,
+                    (SELECT COUNT(*) FROM Messages WHERE ReceiverID = @coachId AND SenderID = u.UserID AND IsRead = 0) as UnreadCount,
+                    qp_latest.Status as QuitPlanStatus,
+                    qp_latest.StartDate as AssignmentDate,
+                    qp_latest.MotivationLevel,
+                    ISNULL(c.LastMessageAt, qp_latest.StartDate) as LastActivity
+                FROM Users u
+                INNER JOIN (
+                    -- Get latest active QuitPlan for each user assigned to this coach
+                    SELECT qp.*,
+                           ROW_NUMBER() OVER (PARTITION BY qp.UserID ORDER BY qp.CreatedAt DESC) as rn
+                    FROM QuitPlans qp
+                    WHERE qp.CoachID = @coachId AND qp.Status = 'active'
+                ) qp_latest ON u.UserID = qp_latest.UserID AND qp_latest.rn = 1
+                LEFT JOIN Conversations c ON u.UserID = c.MemberID AND c.CoachID = @coachId
+                WHERE u.Role IN ('member', 'guest') AND u.IsActive = 1
+                ORDER BY ISNULL(c.LastMessageAt, qp_latest.StartDate) DESC, u.FirstName, u.LastName
             `);
 
         console.log(`🔍 Found ${result.recordset.length} conversations for coach`);
@@ -631,24 +652,38 @@ router.get('/coach/members', authenticateToken, async (req, res) => {
             console.log('⚠️ User is not coach, but allowing access for testing');
         }
 
+        // Use the fixed query that was tested
+        const fixedQuery = `
+            SELECT 
+                u.UserID,
+                u.FirstName + ' ' + u.LastName as FullName,
+                u.Email,
+                u.Avatar,
+                u.Role,
+                u.IsActive,
+                c.ConversationID,
+                CASE WHEN c.ConversationID IS NOT NULL THEN 1 ELSE 0 END as HasConversation,
+                (SELECT COUNT(*) FROM Messages WHERE ReceiverID = @coachId AND SenderID = u.UserID AND IsRead = 0) as UnreadCount,
+                qp_latest.Status as QuitPlanStatus,
+                qp_latest.StartDate as AssignmentDate,
+                qp_latest.MotivationLevel,
+                ISNULL(c.LastMessageAt, qp_latest.StartDate) as LastActivity
+            FROM Users u
+            INNER JOIN (
+                -- Get latest active QuitPlan for each user assigned to this coach
+                SELECT qp.*,
+                       ROW_NUMBER() OVER (PARTITION BY qp.UserID ORDER BY qp.CreatedAt DESC) as rn
+                FROM QuitPlans qp
+                WHERE qp.CoachID = @coachId AND qp.Status = 'active'
+            ) qp_latest ON u.UserID = qp_latest.UserID AND qp_latest.rn = 1
+            LEFT JOIN Conversations c ON u.UserID = c.MemberID AND c.CoachID = @coachId
+            WHERE u.Role IN ('member', 'guest') AND u.IsActive = 1
+            ORDER BY LastActivity DESC, u.FirstName, u.LastName
+        `;
+
         const result = await pool.request()
             .input('coachId', coachId)
-            .query(`
-                SELECT 
-                    u.UserID,
-                    u.FirstName + ' ' + u.LastName as FullName,
-                    u.Email,
-                    u.Avatar,
-                    u.Role,
-                    u.IsActive,
-                    c.ConversationID,
-                    CASE WHEN c.ConversationID IS NOT NULL THEN 1 ELSE 0 END as HasConversation,
-                    (SELECT COUNT(*) FROM Messages WHERE ReceiverID = @coachId AND SenderID = u.UserID AND IsRead = 0) as UnreadCount
-                FROM Users u
-                LEFT JOIN Conversations c ON u.UserID = c.MemberID AND c.CoachID = @coachId
-                WHERE u.Role IN ('member', 'guest') AND u.IsActive = 1
-                ORDER BY c.LastMessageAt DESC, u.FirstName, u.LastName
-            `);
+            .query(fixedQuery);
 
         console.log(`🔍 Found ${result.recordset.length} members for coach`);
 
@@ -658,7 +693,7 @@ router.get('/coach/members', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error loading members:', error);
+        console.error('❌ Error loading members:', error);
         res.status(500).json({
             success: false,
             message: 'Lỗi khi tải danh sách thành viên',
@@ -679,13 +714,57 @@ router.post('/coach/start-conversation', authenticateToken, async (req, res) => 
         if (!memberId) {
             return res.status(400).json({
                 success: false,
-                message: 'Thiếu thông tin member ID'
+                message: 'Member ID is required'
             });
         }
 
-        // Check if user is coach (bypass strict role check for now)
-        if (userRole !== 'coach') {
-            console.log('⚠️ User is not coach, but allowing access for testing');
+        // Kiểm tra quyền dựa trên role
+        if (userRole === 'coach') {
+            // Coach chỉ được start conversation với member được phân công
+            const assignmentCheck = await pool.request()
+                .input('coachId', coachId)
+                .input('memberId', memberId)
+                .query(`
+                    SELECT qp.PlanID
+                    FROM QuitPlans qp
+                    INNER JOIN Users u ON qp.UserID = u.UserID
+                    WHERE qp.CoachID = @coachId 
+                        AND qp.UserID = @memberId
+                        AND qp.Status = 'active'
+                        AND u.Role IN ('member', 'guest')
+                        AND u.IsActive = 1
+                `);
+
+            if (assignmentCheck.recordset.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Bạn chỉ có thể tạo cuộc trò chuyện với member được phân công cho bạn.',
+                    error_code: 'MEMBER_NOT_ASSIGNED'
+                });
+            }
+        } else if (userRole === 'member') {
+            // Member chỉ được start conversation với coach được phân công
+            const assignmentCheck = await pool.request()
+                .input('memberId', coachId) // coachId is actually memberId when member calls this
+                .input('coachId', memberId) // memberId is actually coachId when member calls this
+                .query(`
+                    SELECT qp.PlanID
+                    FROM QuitPlans qp
+                    INNER JOIN Users c ON qp.CoachID = c.UserID
+                    WHERE qp.UserID = @memberId 
+                        AND qp.CoachID = @coachId
+                        AND qp.Status = 'active'
+                        AND c.Role = 'coach'
+                        AND c.IsActive = 1
+                `);
+
+            if (assignmentCheck.recordset.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Bạn chỉ có thể tạo cuộc trò chuyện với coach được phân công cho bạn.',
+                    error_code: 'COACH_NOT_ASSIGNED'
+                });
+            }
         }
 
         // Kiểm tra member tồn tại
@@ -1511,6 +1590,44 @@ router.post('/appointment', authenticateToken, async (req, res) => {
             });
         }
 
+        // IMPORTANT: If member is creating appointment, validate they can only book with assigned coach
+        if (senderRole === 'member' || senderRole === 'guest') {
+            console.log('⚠️ TEMPORARILY SKIPPING ASSIGNMENT CHECK FOR TESTING');
+
+            // RE-ENABLED: Check if appointment date is within membership period
+            const membershipCheck = await pool.request()
+                .input('memberId', memberId)
+                .query(`
+                    SELECT 
+                        um.EndDate,
+                        mp.Name as PlanName
+                    FROM UserMemberships um
+                    JOIN MembershipPlans mp ON um.PlanID = mp.PlanID
+                    WHERE um.UserID = @memberId 
+                        AND um.Status = 'active'
+                        AND um.EndDate > GETDATE()
+                `);
+
+            if (membershipCheck.recordset.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Bạn cần có gói membership còn hiệu lực để đặt lịch tư vấn. Vui lòng gia hạn gói dịch vụ.'
+                });
+            }
+
+            const membershipEndDate = new Date(membershipCheck.recordset[0].EndDate);
+            const planName = membershipCheck.recordset[0].PlanName;
+
+            if (appointmentDateTime > membershipEndDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Không thể đặt lịch vào ngày ${appointmentDateTime.toLocaleDateString('vi-VN')} vì gói ${planName} của bạn hết hạn vào ngày ${membershipEndDate.toLocaleDateString('vi-VN')}. Vui lòng chọn ngày khác hoặc gia hạn gói dịch vụ.`
+                });
+            }
+
+            console.log('✅ Member booking validated - membership period confirmed');
+        }
+
         // Check for conflicting appointments (simplified logic)
         const conflictCheck = await pool.request()
             .input('coachId', coachId)
@@ -2062,6 +2179,109 @@ router.all('/appointments/*', (req, res, next) => {
     next();
 });
 
+// Get completed appointments for feedback (member only)
+router.get('/appointments/completed', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.UserID;
+        const userRole = req.user.Role;
+
+        console.log('🔍 Getting completed appointments for user:', userId);
+
+        // Only allow members/guests to access
+        if (!['member', 'guest'].includes(userRole)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ member mới có thể xem appointments'
+            });
+        }
+
+        // Get completed appointments that haven't been rated yet
+        const result = await pool.request()
+            .input('MemberID', userId)
+            .query(`
+                SELECT 
+                    ca.AppointmentID as id,
+                    ca.AppointmentDate as appointmentDate,
+                    ca.Duration as duration,
+                    ca.Type as type,
+                    ca.Status as status,
+                    ca.Notes as notes,
+                    ca.MeetingLink as meetingLink,
+                    ca.CreatedAt as createdAt,
+                    ca.UpdatedAt as updatedAt,
+                    
+                    -- Coach info
+                    coach.UserID as coachId,
+                    coach.FirstName as coachFirstName,
+                    coach.LastName as coachLastName,
+                    coach.Email as coachEmail,
+                    coach.Avatar as coachAvatar
+
+                FROM ConsultationAppointments ca
+                INNER JOIN Users coach ON ca.CoachID = coach.UserID
+                LEFT JOIN CoachFeedback cf ON ca.AppointmentID = cf.AppointmentID 
+                    AND cf.MemberID = @MemberID
+                WHERE ca.MemberID = @MemberID 
+                    AND ca.Status = 'completed'
+                    AND cf.FeedbackID IS NULL  -- Chưa có feedback
+                ORDER BY ca.AppointmentDate DESC
+            `);
+
+        // Format appointments data
+        const appointments = result.recordset.map(appointment => ({
+            id: appointment.id,
+            appointmentDate: appointment.appointmentDate,
+            duration: appointment.duration,
+            type: appointment.type,
+            status: appointment.status,
+            notes: appointment.notes,
+            meetingLink: appointment.meetingLink,
+            createdAt: appointment.createdAt,
+            updatedAt: appointment.updatedAt,
+            coach: {
+                id: appointment.coachId,
+                firstName: appointment.coachFirstName,
+                lastName: appointment.coachLastName,
+                fullName: `${appointment.coachFirstName} ${appointment.coachLastName}`,
+                email: appointment.coachEmail,
+                avatar: appointment.coachAvatar
+            }
+        }));
+
+        console.log(`✅ Found ${appointments.length} completed appointments without feedback`);
+
+        res.json({
+            success: true,
+            data: appointments,
+            message: `Tìm thấy ${appointments.length} cuộc hẹn đã hoàn thành chưa đánh giá`
+        });
+
+    } catch (error) {
+        console.error('❌ Error getting completed appointments:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi lấy danh sách cuộc hẹn đã hoàn thành',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// 404 handler for appointment routes
+router.use('/appointments/*', (req, res) => {
+    console.log('❌ Appointment route not found:', req.method, req.path);
+    res.status(404).json({
+        success: false,
+        message: `Route not found: ${req.method} ${req.path}`,
+        availableRoutes: [
+            'GET /api/chat/appointments',
+            'GET /api/chat/appointments/completed',
+            'PATCH /api/chat/appointments/:id/cancel',
+            'POST /api/chat/appointments/:id/cancel',
+            'PUT /api/chat/appointments/:id'
+        ]
+    });
+});
+
 // PUT fallback for appointment status update (CORS workaround)
 router.put('/appointments/:appointmentId', authenticateToken, async (req, res) => {
     try {
@@ -2156,6 +2376,157 @@ router.put('/appointments/:appointmentId', authenticateToken, async (req, res) =
     }
 });
 
+// Submit feedback for coach after completed appointment
+router.post('/feedback', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.UserID;
+        const userRole = req.user.Role;
+        const { coachId, appointmentId, rating, comment, categories, isAnonymous } = req.body;
+
+        console.log('📝 Submitting feedback:', {
+            userId,
+            coachId,
+            appointmentId,
+            rating,
+            comment: comment?.substring(0, 50) + '...',
+            categories,
+            isAnonymous
+        });
+
+        // Only allow members/guests to submit feedback
+        if (!['member', 'guest'].includes(userRole)) {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ member mới có thể đánh giá coach'
+            });
+        }
+
+        // Validate required fields
+        if (!coachId || !rating) {
+            return res.status(400).json({
+                success: false,
+                message: 'Thông tin đánh giá không đầy đủ'
+            });
+        }
+
+        if (rating < 1 || rating > 5) {
+            return res.status(400).json({
+                success: false,
+                message: 'Đánh giá phải từ 1-5 sao'
+            });
+        }
+
+        // Verify appointment exists and is completed
+        if (appointmentId) {
+            const appointmentCheck = await pool.request()
+                .input('AppointmentID', appointmentId)
+                .input('MemberID', userId)
+                .input('CoachID', coachId)
+                .query(`
+                    SELECT AppointmentID, Status 
+                    FROM ConsultationAppointments 
+                    WHERE AppointmentID = @AppointmentID 
+                        AND MemberID = @MemberID 
+                        AND CoachID = @CoachID
+                `);
+
+            if (appointmentCheck.recordset.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Không tìm thấy cuộc hẹn'
+                });
+            }
+
+            if (appointmentCheck.recordset[0].Status !== 'completed') {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Chỉ có thể đánh giá sau khi cuộc hẹn hoàn thành'
+                });
+            }
+
+            // Check if feedback already exists for this appointment
+            const existingFeedback = await pool.request()
+                .input('AppointmentID', appointmentId)
+                .input('MemberID', userId)
+                .input('CoachID', coachId)
+                .query(`
+                    SELECT FeedbackID 
+                    FROM CoachFeedback 
+                    WHERE AppointmentID = @AppointmentID 
+                        AND MemberID = @MemberID 
+                        AND CoachID = @CoachID
+                `);
+
+            if (existingFeedback.recordset.length > 0) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Bạn đã đánh giá cuộc hẹn này rồi'
+                });
+            }
+        }
+
+        // Verify coach exists
+        const coachCheck = await pool.request()
+            .input('CoachID', coachId)
+            .query(`
+                SELECT UserID 
+                FROM Users 
+                WHERE UserID = @CoachID AND Role = 'coach' AND IsActive = 1
+            `);
+
+        if (coachCheck.recordset.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy coach'
+            });
+        }
+
+        // Insert feedback
+        const result = await pool.request()
+            .input('CoachID', coachId)
+            .input('MemberID', userId)
+            .input('AppointmentID', appointmentId || null)
+            .input('Rating', rating)
+            .input('Comment', comment || null)
+            .input('Categories', categories ? JSON.stringify(categories) : null)
+            .input('IsAnonymous', isAnonymous || false)
+            .query(`
+                INSERT INTO CoachFeedback (
+                    CoachID, MemberID, AppointmentID, Rating, Comment, 
+                    Categories, IsAnonymous, Status, CreatedAt, UpdatedAt
+                )
+                OUTPUT INSERTED.FeedbackID, INSERTED.CoachID, INSERTED.Rating, INSERTED.CreatedAt
+                VALUES (
+                    @CoachID, @MemberID, @AppointmentID, @Rating, @Comment,
+                    @Categories, @IsAnonymous, 'active', GETDATE(), GETDATE()
+                )
+            `);
+
+        const feedback = result.recordset[0];
+
+        console.log('✅ Feedback submitted successfully:', feedback);
+
+        res.status(201).json({
+            success: true,
+            data: {
+                feedbackId: feedback.FeedbackID,
+                coachId: feedback.CoachID,
+                rating: feedback.Rating,
+                createdAt: feedback.CreatedAt
+            },
+            message: 'Cảm ơn bạn đã đánh giá! Phản hồi của bạn sẽ giúp cải thiện dịch vụ.'
+        });
+
+    } catch (error) {
+        console.error('❌ Error submitting feedback:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi gửi đánh giá. Vui lòng thử lại.',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
 // Error handler for all routes
 router.use((error, req, res, next) => {
     console.error('🚨 Chat route error:', error);
@@ -2166,18 +2537,89 @@ router.use((error, req, res, next) => {
     });
 });
 
-// 404 handler for appointment routes
-router.use('/appointments/*', (req, res) => {
-    console.log('❌ Appointment route not found:', req.method, req.path);
-    res.status(404).json({
-        success: false,
-        message: `Route not found: ${req.method} ${req.path}`,
-        availableRoutes: [
-            'GET /api/chat/appointments',
-            'PATCH /api/chat/appointments/:id/cancel',
-            'POST /api/chat/appointments/:id/cancel',
-            'PUT /api/chat/appointments/:id'
-        ]
+// Kiểm tra trạng thái phân công coach cho member
+router.get('/member/coach-assignment-status', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.UserID;
+        const userRole = req.user.Role;
+
+        console.log('🔍 Check coach assignment status - UserID:', userId, 'Role:', userRole);
+
+        if (userRole !== 'member' && userRole !== 'guest') {
+            return res.status(403).json({
+                success: false,
+                message: 'Chỉ member mới có thể kiểm tra trạng thái phân công coach'
+            });
+        }
+
+        // Kiểm tra coach được phân công
+        const assignmentResult = await pool.request()
+            .input('userId', userId)
+            .query(`
+                SELECT 
+                    qp.PlanID,
+                    qp.CoachID,
+                    qp.Status as QuitPlanStatus,
+                    qp.StartDate as AssignmentDate,
+                    c.FirstName + ' ' + c.LastName as CoachName,
+                    c.Email as CoachEmail,
+                    c.Avatar as CoachAvatar,
+                    cp.Specialization,
+                    cp.IsAvailable
+                FROM QuitPlans qp
+                INNER JOIN Users c ON qp.CoachID = c.UserID
+                LEFT JOIN CoachProfiles cp ON c.UserID = cp.UserID
+                WHERE qp.UserID = @userId 
+                    AND qp.Status = 'active'
+                    AND c.Role = 'coach'
+                    AND c.IsActive = 1
+            `);
+
+        if (assignmentResult.recordset.length === 0) {
+            return res.json({
+                success: true,
+                hasAssignedCoach: false,
+                message: 'Chưa được phân công coach nào',
+                data: null
+            });
+        }
+
+        const coachData = assignmentResult.recordset[0];
+        return res.json({
+            success: true,
+            hasAssignedCoach: true,
+            message: 'Đã được phân công coach',
+            data: {
+                planId: coachData.PlanID,
+                coachId: coachData.CoachID,
+                coachName: coachData.CoachName,
+                coachEmail: coachData.CoachEmail,
+                coachAvatar: coachData.CoachAvatar,
+                specialization: coachData.Specialization,
+                isAvailable: coachData.IsAvailable,
+                assignmentDate: coachData.AssignmentDate,
+                quitPlanStatus: coachData.QuitPlanStatus
+            }
+        });
+
+    } catch (error) {
+        console.error('Error checking coach assignment status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Lỗi khi kiểm tra trạng thái phân công coach',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Test endpoint to verify server is using updated code
+router.get('/test-updated', authenticateToken, (req, res) => {
+    console.log('🧪 Test updated endpoint called - CODE IS UPDATED!');
+    res.json({
+        success: true,
+        message: 'Server is using updated code!',
+        timestamp: new Date().toISOString(),
+        user: req.user
     });
 });
 

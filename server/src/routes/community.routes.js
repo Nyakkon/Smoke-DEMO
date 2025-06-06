@@ -3,34 +3,42 @@ const router = express.Router();
 const { protect } = require('../middleware/auth.middleware');
 const { pool } = require('../config/database');
 
-// Get all community posts with achievements and likes
+// Get all community posts with user details and achievement info
 router.get('/posts', async (req, res) => {
     try {
-        const result = await pool.request()
-            .query(`
-        SELECT 
-            p.*,
-            u.FirstName,
-            u.LastName,
-            u.Avatar,
-            a.Name as AchievementName,
-            a.Description as AchievementDescription,
-            a.IconURL as AchievementIcon,
-            (SELECT COUNT(*) FROM CommunityComments c WHERE c.PostID = p.PostID) as CommentCount,
-            (SELECT COUNT(*) FROM PostLikes pl WHERE pl.PostID = p.PostID) as LikesCount
-        FROM CommunityPosts p
-        JOIN Users u ON p.UserID = u.UserID
-        LEFT JOIN Achievements a ON p.AchievementID = a.AchievementID
-        WHERE p.IsPublic = 1
-        ORDER BY p.CreatedAt DESC
-      `);
+        // Set cache control headers to prevent 304 responses
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'Last-Modified': new Date().toUTCString()
+        });
 
-        res.json({
+        const result = await pool.request().query(`
+            SELECT 
+                p.*,
+                u.FirstName,
+                u.LastName,
+                u.Avatar,
+                a.Name as AchievementName,
+                a.Description as AchievementDescription,
+                a.IconURL as AchievementIcon,
+                (SELECT COUNT(*) FROM CommunityComments c WHERE c.PostID = p.PostID) as CommentCount,
+                (SELECT COUNT(*) FROM PostLikes pl WHERE pl.PostID = p.PostID) as LikesCount
+            FROM CommunityPosts p
+            JOIN Users u ON p.UserID = u.UserID
+            LEFT JOIN Achievements a ON p.AchievementID = a.AchievementID
+            WHERE p.IsPublic = 1
+            ORDER BY p.CreatedAt DESC
+        `);
+
+        res.status(200).json({
             success: true,
+            timestamp: new Date().toISOString(),
             data: result.recordset
         });
     } catch (error) {
-        console.error(error);
+        console.error('Error getting community posts:', error);
         res.status(500).json({
             success: false,
             message: 'Error getting community posts'
@@ -315,6 +323,15 @@ router.delete('/posts/:postId', protect, async (req, res) => {
         // Check if user is admin or the owner of the post
         if (req.user.role === 'admin') {
             // Admin can delete any post
+            // First delete all comments and likes for this post
+            await pool.request()
+                .input('PostID', postId)
+                .query(`
+                DELETE FROM CommunityComments WHERE PostID = @PostID;
+                DELETE FROM PostLikes WHERE PostID = @PostID;
+            `);
+
+            // Then delete the post
             const result = await pool.request()
                 .input('PostID', postId)
                 .query(`
@@ -337,6 +354,22 @@ router.delete('/posts/:postId', protect, async (req, res) => {
             });
         } else {
             // Regular user can only delete their own posts
+            // First delete all comments and likes for this post if user owns the post
+            await pool.request()
+                .input('PostID', postId)
+                .input('UserID', req.user.UserID)
+                .query(`
+                DELETE FROM CommunityComments 
+                WHERE PostID = @PostID AND PostID IN (
+                    SELECT PostID FROM CommunityPosts WHERE PostID = @PostID AND UserID = @UserID
+                );
+                DELETE FROM PostLikes 
+                WHERE PostID = @PostID AND PostID IN (
+                    SELECT PostID FROM CommunityPosts WHERE PostID = @PostID AND UserID = @UserID
+                );
+            `);
+
+            // Then delete the post
             const result = await pool.request()
                 .input('PostID', postId)
                 .input('UserID', req.user.UserID)
@@ -471,31 +504,58 @@ router.delete('/comments/:commentId', protect, async (req, res) => {
     try {
         const { commentId } = req.params;
 
-        const result = await pool.request()
-            .input('CommentID', commentId)
-            .input('UserID', req.user.UserID)
-            .query(`
-        DELETE FROM CommunityComments
-        OUTPUT DELETED.*
-        WHERE CommentID = @CommentID AND UserID = @UserID
-      `);
+        // Check if user is admin or the owner of the comment
+        if (req.user.role === 'admin') {
+            // Admin can delete any comment
+            const result = await pool.request()
+                .input('CommentID', commentId)
+                .query(`
+                DELETE FROM CommunityComments
+                OUTPUT DELETED.*
+                WHERE CommentID = @CommentID
+            `);
 
-        if (result.recordset.length === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Comment not found'
+            if (result.recordset.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Community comment not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: result.recordset[0],
+                deletedBy: 'admin'
+            });
+        } else {
+            // Regular user can only delete their own comments
+            const result = await pool.request()
+                .input('CommentID', commentId)
+                .input('UserID', req.user.UserID)
+                .query(`
+                DELETE FROM CommunityComments
+                OUTPUT DELETED.*
+                WHERE CommentID = @CommentID AND UserID = @UserID
+            `);
+
+            if (result.recordset.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Comment not found or you do not have permission to delete it'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: result.recordset[0],
+                deletedBy: 'owner'
             });
         }
-
-        res.json({
-            success: true,
-            data: result.recordset[0]
-        });
     } catch (error) {
-        console.error(error);
+        console.error('Error deleting comment:', error);
         res.status(500).json({
             success: false,
-            message: 'Error deleting comment'
+            message: 'Error deleting community comment'
         });
     }
 });

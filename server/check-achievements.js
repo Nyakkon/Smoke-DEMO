@@ -8,59 +8,32 @@ const config = {
         trustServerCertificate: true
     },
     authentication: {
-        type: 'default',
+        type: 'ntlm',
         options: {
-            userName: 'sa',
-            password: 'Tran0210203@'
+            domain: '',
+            userName: '',
+            password: ''
         }
     }
 };
 
 async function checkAchievements() {
     try {
-        await sql.connect(config);
-        console.log('🔌 Connected to database');
+        console.log('Connecting to database...');
+        const pool = await sql.connect(config);
 
-        // Check if Achievements table exists
-        const tableCheck = await sql.query`
-            SELECT COUNT(*) as TableExists 
-            FROM INFORMATION_SCHEMA.TABLES 
-            WHERE TABLE_NAME = 'Achievements'
-        `;
+        const result = await pool.request().query('SELECT AchievementID, Name, IconURL FROM Achievements ORDER BY AchievementID');
 
-        console.log('📋 Achievements table exists:', tableCheck.recordset[0].TableExists > 0);
+        console.log('\n📋 Current achievements in database:');
+        result.recordset.forEach(row => {
+            console.log(`   ${row.AchievementID}. ${row.Name}: "${row.IconURL}"`);
+        });
 
-        if (tableCheck.recordset[0].TableExists > 0) {
-            // Check achievement count
-            const countResult = await sql.query`SELECT COUNT(*) as AchievementCount FROM Achievements`;
-            console.log('🏆 Total achievements:', countResult.recordset[0].AchievementCount);
-
-            // Check sample achievements
-            const achievements = await sql.query`SELECT TOP 5 * FROM Achievements`;
-            console.log('📝 Sample achievements:', achievements.recordset);
-
-            // Check if missing IsActive column
-            const columnCheck = await sql.query`
-                SELECT COUNT(*) as ColumnExists 
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_NAME = 'Achievements' AND COLUMN_NAME = 'IsActive'
-            `;
-            console.log('✅ IsActive column exists:', columnCheck.recordset[0].ColumnExists > 0);
-
-            if (columnCheck.recordset[0].ColumnExists === 0) {
-                console.log('❌ Missing IsActive column - adding it...');
-                await sql.query`ALTER TABLE Achievements ADD IsActive BIT DEFAULT 1`;
-                await sql.query`UPDATE Achievements SET IsActive = 1`;
-                console.log('✅ Added IsActive column');
-            }
-        } else {
-            console.log('❌ Achievements table does not exist!');
-        }
+        await pool.close();
+        console.log('\n✨ Check complete!');
 
     } catch (error) {
         console.error('❌ Error:', error.message);
-    } finally {
-        await sql.close();
     }
 }
 

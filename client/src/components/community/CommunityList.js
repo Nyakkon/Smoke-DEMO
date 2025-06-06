@@ -52,6 +52,27 @@ const CommunityList = () => {
     const [form] = Form.useForm();
     const [deletingPostId, setDeletingPostId] = useState(null);
 
+    // Helper function to render achievement icon
+    const renderAchievementIcon = (iconUrl, size = '32px') => {
+        // If no IconURL, show default trophy
+        if (!iconUrl) {
+            return <span style={{ fontSize: size }}>🏆</span>;
+        }
+
+        // If IconURL is already an emoji (length <= 4 and not a path)
+        if (iconUrl.length <= 4 && !/^\/|^http|\.png|\.jpg|\.gif|\.svg/i.test(iconUrl)) {
+            return <span style={{ fontSize: size, display: 'block', lineHeight: 1 }}>{iconUrl}</span>;
+        }
+
+        // If IconURL looks like an image path, show default emoji instead
+        if (/\/images\/|\.png|\.jpg|\.gif|\.svg/i.test(iconUrl)) {
+            return <span style={{ fontSize: size }}>🏆</span>;
+        }
+
+        // Default case
+        return <span style={{ fontSize: size }}>🏆</span>;
+    };
+
     useEffect(() => {
         fetchPosts();
         if (user) {
@@ -194,7 +215,7 @@ const CommunityList = () => {
 
         return (
             <Tag
-                icon={<TrophyOutlined />}
+                icon={renderAchievementIcon(post.AchievementIcon, '14px')}
                 color="gold"
                 style={{ marginBottom: 8 }}
             >
@@ -259,16 +280,8 @@ const CommunityList = () => {
                                             </Tooltip>
                                         ]}
                                     >
-                                        <div style={{ fontSize: '32px', marginBottom: 8 }}>
-                                            {achievement.IconURL ? (
-                                                <img
-                                                    src={achievement.IconURL}
-                                                    alt={achievement.Name}
-                                                    style={{ width: 32, height: 32 }}
-                                                />
-                                            ) : (
-                                                '🏆'
-                                            )}
+                                        <div style={{ marginBottom: 8 }}>
+                                            {renderAchievementIcon(achievement.IconURL)}
                                         </div>
                                         <Text strong style={{ fontSize: '12px' }}>{achievement.Name}</Text>
                                     </Card>

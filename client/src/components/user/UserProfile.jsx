@@ -92,21 +92,58 @@ const UserProfile = () => {
     };
 
     const handleSave = (values) => {
+        // Validate required fields
+        if (!values.firstName?.trim() || !values.lastName?.trim()) {
+            notification.error({
+                message: 'Lỗi',
+                description: 'Họ và tên không được để trống',
+            });
+            return;
+        }
+
+        // Check if user is logged in - handle both id and UserID fields
+        if (!user || (!user.id && !user.UserID)) {
+            notification.error({
+                message: 'Lỗi xác thực',
+                description: 'Bạn cần đăng nhập để cập nhật thông tin',
+            });
+            return;
+        }
+
+        console.log('Submitting profile update:', values);
+        console.log('User object:', user);
+
         dispatch(updateProfile(values))
             .unwrap()
             .then((response) => {
+                console.log('Profile update successful:', response);
                 notification.success({
-                    message: 'Success',
-                    description: 'Profile updated successfully!',
+                    message: 'Thành công',
+                    description: 'Thông tin cá nhân đã được cập nhật!',
                 });
                 setEditMode(false);
+                // Refresh user data
                 dispatch(getCurrentUser());
             })
             .catch((error) => {
+                console.error('Profile update error:', error);
+
+                let errorMessage = 'Không thể cập nhật thông tin';
+                if (error && error.message) {
+                    errorMessage = error.message;
+                }
+
                 notification.error({
-                    message: 'Error',
-                    description: error.message || 'Failed to update profile',
+                    message: 'Lỗi cập nhật',
+                    description: errorMessage,
                 });
+
+                // If authentication error, redirect to login
+                if (errorMessage.includes('đăng nhập')) {
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 2000);
+                }
             });
     };
 

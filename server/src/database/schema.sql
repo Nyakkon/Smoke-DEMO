@@ -31,6 +31,9 @@ CREATE TABLE Users (
     RefreshTokenExpiry DATETIME
 );
 
+-- Clear existing sample data before inserting
+DELETE FROM Users WHERE Email IN ('guest@example.com', 'member@example.com', 'coach@example.com', 'admin@example.com', 'coach2@example.com');
+
 -- Insert mẫu người dùng với password bình thường (không hash)
 INSERT INTO Users (Email, Password, FirstName, LastName, Role, Avatar, PhoneNumber, Address,
     IsActive, ActivationToken, ActivationExpires, EmailVerified, CreatedAt, UpdatedAt, LastLoginAt,
@@ -43,7 +46,9 @@ VALUES
 ('coach@example.com', 'H12345678@', 'Coach', 'Smith', 'coach', 'coach.jpg', '0111222333', '789 Coach Blvd',
  1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_coach', DATEADD(DAY, 7, GETDATE())),
 ('admin@example.com', 'H12345678@', 'Admin', 'Root', 'admin', 'admin.png', '0999888777', '321 Admin Ave',
- 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_admin', DATEADD(DAY, 30, GETDATE()));
+ 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_admin', DATEADD(DAY, 30, GETDATE())),
+('coach2@example.com', 'H12345678@', 'Dr. Minh', 'Nguyen', 'coach', 'coach2.jpg', '0333444555', '456 Wellness Center',
+ 1, NULL, NULL, 1, GETDATE(), GETDATE(), GETDATE(), 'refreshtoken_coach2', DATEADD(DAY, 7, GETDATE()));
 
 -- Login History
 CREATE TABLE LoginHistory (
@@ -76,12 +81,14 @@ CREATE TABLE MembershipPlans (
     CreatedAt DATETIME DEFAULT GETDATE()
 );
 
--- Insert các Plan mẫu
+-- Clear existing membership plans before inserting
+DELETE FROM MembershipPlans;
+DBCC CHECKIDENT ('MembershipPlans', RESEED, 0);
+
+-- Insert các Plan mẫu với chỉ Premium Plan
 INSERT INTO MembershipPlans (Name, Description, Price, Duration, Features)
 VALUES 
-('Basic Plan', 'A basic plan for quitting support.', 99.00, 30, 'Progress tracking, Basic quitting tips, Community access'),
-('Premium Plan', 'A premium plan with advanced support.', 199.00, 60, 'Progress tracking, Advanced analytics, Premium quitting strategies, Community access, Weekly motivation'),
-('Pro Plan', 'The best plan with full support and coaching.', 299.00, 90, 'Progress tracking, Advanced analytics, Pro quitting strategies, Community access, Daily motivation, Personalized coaching, Health improvement dashboard');
+('Premium Plan', 'Gói cao cấp có hỗ trợ nâng cao.', 199000, 60, 'Theo dõi tiến trình, Phân tích nâng cao, Chiến lược bỏ thuốc cao cấp, Truy cập cộng đồng, Động lực hàng tuần, Được coach tư vấn qua chat và có thể đặt lịch');
 
 -- User Memberships
 CREATE TABLE UserMemberships (
@@ -175,6 +182,10 @@ CREATE TABLE UserSurveyAnswers (
     SubmittedAt DATETIME DEFAULT GETDATE()
 );
 
+-- Clear existing survey questions before inserting
+DELETE FROM SurveyQuestions;
+DBCC CHECKIDENT ('SurveyQuestions', RESEED, 1);
+
 -- Insert 10 câu hỏi khảo sát
 INSERT INTO SurveyQuestions (QuestionText)
 VALUES 
@@ -209,6 +220,9 @@ CREATE TABLE BlogPosts (
     CONSTRAINT FK_BlogPosts_Users FOREIGN KEY (AuthorID)
         REFERENCES Users(UserID)
 );
+
+-- Clear existing blog posts before inserting
+DELETE FROM BlogPosts WHERE AuthorID IN (2, 3);
 
 -- Insert sample blog posts
 INSERT INTO BlogPosts (Title, MetaDescription, Content, ThumbnailURL, AuthorID, Status, PublishedAt, Views)
@@ -350,6 +364,12 @@ CREATE TABLE Achievements (
     CreatedAt DATETIME DEFAULT GETDATE()
 );
 
+-- Clear existing data before inserting sample achievements
+DELETE FROM Achievements;
+
+-- Reset identity seed
+DBCC CHECKIDENT ('Achievements', RESEED, 1);
+
 -- Insert sample achievements
 INSERT INTO Achievements (Name, Description, IconURL, MilestoneDays, SavedMoney)
 VALUES 
@@ -408,18 +428,39 @@ CREATE TABLE PostLikes (
 );
 
 -- Ví dụ Insert Payment & Membership
-DECLARE @userID INT = 2;
-DECLARE @planID INT = 1;
-DECLARE @amount DECIMAL(10,2) = (SELECT Price FROM MembershipPlans WHERE PlanID = @planID);
-DECLARE @duration INT = (SELECT Duration FROM MembershipPlans WHERE PlanID = @planID);
-DECLARE @startDate DATETIME = GETDATE();
-DECLARE @endDate DATETIME = DATEADD(DAY, @duration, @startDate);
+-- DECLARE @userID INT = 2;
+-- DECLARE @planID INT = 2; -- Sửa từ 1 thành 2 vì sau khi RESEED 1, insert sẽ tạo PlanID = 2
 
-INSERT INTO Payments (UserID, PlanID, Amount, PaymentMethod, Status, TransactionID, StartDate, EndDate, Note)
-VALUES (@userID, @planID, @amount, 'BankTransfer', 'confirmed', 'TX123456789', @startDate, @endDate, N'Đăng ký qua trang web');
+-- Check if the plan exists first
+-- IF NOT EXISTS (SELECT 1 FROM MembershipPlans WHERE PlanID = @planID)
+-- BEGIN
+--     PRINT 'Plan with ID ' + CAST(@planID AS NVARCHAR) + ' does not exist. Skipping membership insert.';
+-- END
+-- ELSE
+-- BEGIN
+--     DECLARE @amount DECIMAL(10,2) = (SELECT Price FROM MembershipPlans WHERE PlanID = @planID);
+--     DECLARE @duration INT = (SELECT Duration FROM MembershipPlans WHERE PlanID = @planID);
+--     DECLARE @startDate DATETIME = GETDATE();
+--     DECLARE @endDate DATETIME = DATEADD(DAY, @duration, @startDate);
 
-INSERT INTO UserMemberships (UserID, PlanID, StartDate, EndDate, Status)
-VALUES (@userID, @planID, @startDate, @endDate, 'active');
+--     -- Debug: Print the calculated values
+--     PRINT 'PlanID: ' + CAST(@planID AS NVARCHAR);
+--     PRINT 'Duration: ' + CAST(@duration AS NVARCHAR);
+--     PRINT 'StartDate: ' + CAST(@startDate AS NVARCHAR);
+--     PRINT 'EndDate: ' + CAST(@endDate AS NVARCHAR);
+
+--     -- Clear existing sample membership before inserting
+--     DELETE FROM UserMemberships WHERE UserID = @userID AND PlanID = @planID;
+
+--     -- Fix: Ensure EndDate is properly calculated and not NULL
+--     INSERT INTO UserMemberships (UserID, PlanID, StartDate, EndDate, Status)
+--     VALUES (@userID, @planID, @startDate, @endDate, 'active');
+    
+--     PRINT 'UserMembership inserted successfully for UserID: ' + CAST(@userID AS NVARCHAR);
+-- END
+
+-- NOTE: UserMemberships data is now inserted using the quick-id-fix.sql script
+-- This ensures correct PlanID references after IDENTITY reseeding
 
 -- Chat Messages Table
 CREATE TABLE Messages (
@@ -486,6 +527,10 @@ CREATE TABLE MessageAttachments (
 );
 
 -- Insert sample conversations and messages
+-- Clear existing sample data first
+DELETE FROM Messages WHERE (SenderID = 3 AND ReceiverID = 2) OR (SenderID = 2 AND ReceiverID = 3);
+DELETE FROM Conversations WHERE CoachID = 3 AND MemberID = 2;
+
 -- Tạo conversation giữa coach (UserID=3) và member (UserID=2)
 INSERT INTO Conversations (CoachID, MemberID, LastMessageAt)
 VALUES (3, 2, GETDATE());
@@ -504,6 +549,9 @@ UPDATE Conversations
 SET LastMessageID = (SELECT MAX(MessageID) FROM Messages WHERE (SenderID = 3 AND ReceiverID = 2) OR (SenderID = 2 AND ReceiverID = 3)),
     LastMessageAt = GETDATE()
 WHERE CoachID = 3 AND MemberID = 2;
+
+-- Clear existing consultation appointments before inserting
+DELETE FROM ConsultationAppointments WHERE CoachID = 3 AND MemberID = 2;
 
 -- Insert sample consultation appointment
 INSERT INTO ConsultationAppointments (CoachID, MemberID, AppointmentDate, Duration, Type, Status, Notes)
@@ -548,6 +596,9 @@ CREATE TABLE CoachReviews (
     FOREIGN KEY (CoachUserID) REFERENCES Users(UserID)
 );
 
+-- Clear existing coach profiles before inserting
+DELETE FROM CoachProfiles WHERE UserID IN (3, 5);
+
 -- Insert sample coach profiles
 INSERT INTO CoachProfiles (UserID, Bio, Specialization, Experience, HourlyRate, IsAvailable, YearsOfExperience, Education, Certifications, Languages, WorkingHours, ConsultationTypes, SuccessRate, TotalClients)
 VALUES 
@@ -558,14 +609,29 @@ VALUES
  N'Tiếng Việt, Tiếng Anh', 
  N'Thứ 2-6: 8:00-17:00, Thứ 7: 8:00-12:00', 
  N'Video call, Voice call, Chat', 
- 85.5, 150);
+ 85.5, 150),
+(5, N'Bác sĩ chuyên khoa với hơn 8 năm kinh nghiệm trong lĩnh vực cai nghiện thuốc lá. Tôi áp dụng phương pháp khoa học kết hợp với tâm lý trị liệu để giúp bệnh nhân cai thuốc hiệu quả.', 
+ N'Y học cai nghiện, Tâm lý trị liệu, Dinh dưỡng sức khỏe', 8, 300000.00, 1, 8, 
+ N'Tiến sĩ Y khoa - Đại học Y dược TP.HCM, Thạc sĩ Tâm lý lâm sàng', 
+ N'Chứng chỉ bác sĩ chuyên khoa nội, Chứng chỉ tư vấn cai nghiện quốc tế, Chứng chỉ NLP (Neuro-Linguistic Programming)', 
+ N'Tiếng Việt, Tiếng Anh, Tiếng Pháp', 
+ N'Thứ 2-7: 9:00-18:00, Chủ nhật: 9:00-15:00', 
+ N'Video call, Voice call, Chat, Tư vấn trực tiếp', 
+ 92.8, 280);
+
+-- Clear existing coach reviews before inserting
+DELETE FROM CoachReviews WHERE CoachUserID IN (3, 5);
 
 -- Insert sample reviews
 INSERT INTO CoachReviews (CoachUserID, ClientName, ReviewTitle, ReviewContent, Rating, IsAnonymous, IsVerified, IsPublic)
 VALUES 
 (3, N'Nguyễn Văn A', N'Coach rất tận tâm', N'Coach Smith đã giúp tôi rất nhiều trong việc cai thuốc. Những lời khuyên của coach rất thiết thực và hiệu quả.', 5, 0, 1, 1),
 (3, N'Trần Thị B', N'Phương pháp hiệu quả', N'Tôi đã thử nhiều cách nhưng không thành công. Nhờ có coach mà tôi đã cai được thuốc sau 3 tháng.', 5, 0, 1, 1),
-(3, N'Lê Văn C', N'Hỗ trợ tốt', N'Coach luôn sẵn sàng hỗ trợ khi tôi gặp khó khăn. Rất recommend!', 4, 0, 1, 1);
+(3, N'Lê Văn C', N'Hỗ trợ tốt', N'Coach luôn sẵn sàng hỗ trợ khi tôi gặp khó khăn. Rất recommend!', 4, 0, 1, 1),
+(5, N'Phạm Thị D', N'Bác sĩ chuyên nghiệp', N'Dr. Minh rất chuyên nghiệp và am hiểu. Phương pháp điều trị của bác sĩ rất khoa học và hiệu quả.', 5, 0, 1, 1),
+(5, N'Trần Văn E', N'Cai thuốc thành công', N'Sau 6 tháng theo dõi với Dr. Minh, tôi đã hoàn toàn cai được thuốc. Cảm ơn bác sĩ rất nhiều!', 5, 0, 1, 1),
+(5, N'Nguyễn Thị F', N'Tư vấn tận tình', N'Bác sĩ tư vấn rất kỹ lưỡng và kiên nhẫn. Giải đáp mọi thắc mắc của tôi một cách chi tiết.', 4, 0, 1, 1),
+(5, N'Lê Văn G', N'Hiệu quả cao', N'Phương pháp của Dr. Minh giúp tôi giảm được cơn thèm thuốc rất nhanh. Highly recommended!', 5, 0, 1, 1);
 
 CREATE TABLE CoachFeedback (
     FeedbackID INT IDENTITY(1,1) PRIMARY KEY,
@@ -586,13 +652,31 @@ CREATE TABLE CoachFeedback (
     UNIQUE(MemberID, CoachID, AppointmentID) -- Mỗi member chỉ đánh giá 1 lần cho 1 coach trong 1 buổi
 );
 
+-- Clear existing coach feedback before inserting
+DELETE FROM CoachFeedback WHERE CoachID IN (3, 5) AND MemberID IN (2, 4);
+
 -- Insert sample feedback data
 INSERT INTO CoachFeedback (CoachID, MemberID, AppointmentID, Rating, Comment, Categories, IsAnonymous)
 VALUES 
 (3, 2, NULL, 5, N'Coach Smith rất tận tâm và kiên nhẫn. Những lời khuyên của coach đã giúp em rất nhiều trong việc cai thuốc.', 
  '{"professionalism": 5, "helpfulness": 5, "communication": 5, "knowledge": 4}', 0),
 (3, 4, NULL, 4, N'Coach có kiến thức chuyên môn tốt, tuy nhiên em mong muốn có thêm thời gian tư vấn.', 
- '{"professionalism": 4, "helpfulness": 4, "communication": 4, "knowledge": 5}', 1);
+ '{"professionalism": 4, "helpfulness": 4, "communication": 4, "knowledge": 5}', 1),
+(5, 2, NULL, 5, N'Dr. Minh là bác sĩ rất chuyên nghiệp. Phương pháp điều trị khoa học và hiệu quả, tôi đã cai thuốc thành công sau 4 tháng.', 
+ '{"professionalism": 5, "helpfulness": 5, "communication": 5, "knowledge": 5}', 0);
+
+-- Notifications Table
+CREATE TABLE Notifications (
+    NotificationID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    Type NVARCHAR(50) NOT NULL,
+    Title NVARCHAR(255) NOT NULL,
+    Message NVARCHAR(MAX) NOT NULL,
+    RelatedID INT NULL,
+    IsRead BIT DEFAULT 0,
+    CreatedAt DATETIME DEFAULT GETDATE(),
+    FOREIGN KEY (UserID) REFERENCES Users(UserID)
+);
 GO
 
 -- Coach Statistics View (để tính toán thống kê đánh giá)
@@ -611,3 +695,73 @@ FROM Users c
 LEFT JOIN CoachFeedback cf ON c.UserID = cf.CoachID AND cf.Status = 'active'
 WHERE c.Role = 'coach'
 GROUP BY c.UserID, c.FirstName, c.LastName;
+GO
+
+-- Refund Requests Table (Yêu cầu hoàn tiền)
+CREATE TABLE RefundRequests (
+    RefundRequestID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    PaymentID INT NOT NULL,
+    MembershipID INT NULL,
+    RefundAmount DECIMAL(10,2) NOT NULL,
+    RefundReason NVARCHAR(MAX),
+    BankAccountNumber NVARCHAR(50),
+    BankName NVARCHAR(100),
+    AccountHolderName NVARCHAR(100),
+    Status NVARCHAR(20) DEFAULT 'pending' CHECK (Status IN ('pending', 'approved', 'rejected', 'completed')),
+    RequestedAt DATETIME DEFAULT GETDATE(),
+    ProcessedAt DATETIME NULL,
+    ProcessedByUserID INT NULL,
+    AdminNotes NVARCHAR(MAX),
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    FOREIGN KEY (PaymentID) REFERENCES Payments(PaymentID),
+    FOREIGN KEY (MembershipID) REFERENCES UserMemberships(MembershipID),
+    FOREIGN KEY (ProcessedByUserID) REFERENCES Users(UserID)
+);
+
+-- Refunds Table (Lịch sử hoàn tiền đã thực hiện)
+CREATE TABLE Refunds (
+    RefundID INT IDENTITY(1,1) PRIMARY KEY,
+    RefundRequestID INT NOT NULL,
+    UserID INT NOT NULL,
+    RefundAmount DECIMAL(10,2) NOT NULL,
+    RefundMethod NVARCHAR(50) CHECK (RefundMethod IN ('BankTransfer', 'Cash', 'WalletCredit')),
+    TransactionID NVARCHAR(255),
+    Status NVARCHAR(20) DEFAULT 'completed' CHECK (Status IN ('completed', 'failed')),
+    RefundDate DATETIME DEFAULT GETDATE(),
+    ProcessedByUserID INT NOT NULL,
+    Notes NVARCHAR(MAX),
+    
+    FOREIGN KEY (RefundRequestID) REFERENCES RefundRequests(RefundRequestID),
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    FOREIGN KEY (ProcessedByUserID) REFERENCES Users(UserID)
+);
+
+-- Cancellation Requests Table (Yêu cầu hủy gói dịch vụ)
+CREATE TABLE CancellationRequests (
+    CancellationRequestID INT IDENTITY(1,1) PRIMARY KEY,
+    UserID INT NOT NULL,
+    MembershipID INT NOT NULL,
+    PaymentID INT NULL, -- Liên kết với payment gốc nếu có
+    CancellationReason NVARCHAR(MAX),
+    RequestedRefundAmount DECIMAL(10,2), -- Số tiền member yêu cầu hoàn
+    Status NVARCHAR(20) DEFAULT 'pending' CHECK (Status IN ('pending', 'approved', 'rejected', 'completed')),
+    RequestedAt DATETIME DEFAULT GETDATE(),
+    ProcessedAt DATETIME NULL,
+    ProcessedByUserID INT NULL, -- Admin xử lý
+    AdminNotes NVARCHAR(MAX), -- Ghi chú của admin
+    RefundApproved BIT DEFAULT 0, -- Admin có chấp nhận hoàn tiền không
+    RefundAmount DECIMAL(10,2) NULL, -- Số tiền admin chấp nhận hoàn (có thể khác với yêu cầu)
+    
+    FOREIGN KEY (UserID) REFERENCES Users(UserID),
+    FOREIGN KEY (MembershipID) REFERENCES UserMemberships(MembershipID),
+    FOREIGN KEY (PaymentID) REFERENCES Payments(PaymentID),
+    FOREIGN KEY (ProcessedByUserID) REFERENCES Users(UserID)
+);
+
+-- Cập nhật bảng UserMemberships để hỗ trợ trạng thái pending_cancellation
+-- Không cần ALTER TABLE vì đã có Status field, chỉ cần thêm giá trị mới vào CHECK constraint
+-- ALTER TABLE UserMemberships DROP CONSTRAINT [constraint_name];
+-- ALTER TABLE UserMemberships ADD CONSTRAINT CHK_UserMemberships_Status 
+--     CHECK (Status IN ('active', 'expired', 'cancelled', 'pending', 'pending_cancellation'));

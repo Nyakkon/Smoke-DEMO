@@ -63,7 +63,7 @@ const MembershipPage = () => {
                                             style={{ width: '100%' }}
                                             onError={(e) => {
                                                 e.target.onerror = null;
-                                                e.target.src = '/api/images/default-blog.jpg';
+                                                e.target.src = '/api/images/default-blog.svg';
                                             }}
                                         />
                                     </Col>

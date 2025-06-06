@@ -1,68 +1,66 @@
 import axios from 'axios';
 
-// Set a fixed API URL to ensure correct port
-const API_URL = 'http://localhost:4000/api';
-
-// Create an axios instance
+// Create axios instance
 const axiosInstance = axios.create({
-    baseURL: API_URL,
-    timeout: 10000,
-    withCredentials: false, // Changed to false to avoid CORS issues
+    baseURL: 'http://localhost:4000/api',
+    timeout: 30000,
     headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
+    },
 });
 
-// Request interceptor
+// Request interceptor to add token
 axiosInstance.interceptors.request.use(
     (config) => {
-        // Add authorization header if token exists
         const token = localStorage.getItem('token');
         if (token) {
-            config.headers['Authorization'] = `Bearer ${token}`;
+            config.headers.Authorization = `Bearer ${token}`;
         }
+
+        console.log('🔗 Axios Request:', {
+            method: config.method?.toUpperCase(),
+            url: config.url,
+            fullURL: config.baseURL + config.url,
+            hasToken: !!token,
+            headers: config.headers
+        });
+
         return config;
     },
     (error) => {
-        console.error('Request error:', error);
+        console.error('❌ Request interceptor error:', error);
         return Promise.reject(error);
     }
 );
 
-// Response interceptor
+// Response interceptor for error handling
 axiosInstance.interceptors.response.use(
-    (response) => response,
+    (response) => {
+        console.log('✅ Axios Response:', {
+            status: response.status,
+            url: response.config.url,
+            success: response.data?.success
+        });
+        return response;
+    },
     (error) => {
-        // Handle network errors
-        if (error.message === 'Network Error' || !error.response) {
-            console.error('Network error or server not responding');
-            // You can dispatch an action here or show a notification
-        }
+        console.error('❌ Axios Response Error:', {
+            status: error.response?.status,
+            url: error.config?.url,
+            message: error.response?.data?.message || error.message,
+            data: error.response?.data
+        });
 
-        // Handle different status codes
-        if (error.response) {
-            const { status } = error.response;
-
-            if (status === 401) {
-                // Handle unauthorized
-                console.error('Unauthorized access');
-                // localStorage.removeItem('token');
-                // window.location.href = '/login';
-            }
-
-            if (status === 404) {
-                console.error('Resource not found');
-            }
-
-            if (status >= 500) {
-                console.error('Server error');
-            }
+        // Handle 401 unauthorized errors
+        if (error.response?.status === 401) {
+            console.log('🔒 Unauthorized - clearing local storage');
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/login';
         }
 
         return Promise.reject(error);
     }
 );
 
-export default axiosInstance;
-export { API_URL }; 
+export default axiosInstance; 

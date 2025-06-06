@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Layout,
     Card,
@@ -55,15 +55,20 @@ import {
     HeartOutlined,
     SmileOutlined,
     WarningOutlined,
-    MessageOutlined
+    MessageOutlined,
+    FormOutlined,
+    FileTextOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import MemberDetailsModal from '../components/MemberDetailsModal';
 import MemberProgressTracking from '../components/MemberProgressTracking';
 import { CoachChat } from '../components/chat';
+import CoachChatSimple from '../components/chat/CoachChatSimple';
 import AppointmentCalendar from '../components/coach/AppointmentCalendar';
 import CoachFeedbackView from '../components/coach/CoachFeedbackView';
+import CoachSurveyView from '../components/coach/CoachSurveyView';
+import '../components/coach/CoachDashboard.css';
 
 const { Header, Content, Sider } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -93,6 +98,16 @@ const CoachDashboard = () => {
 
     // Progress tracking state
     const [selectedMemberForProgress, setSelectedMemberForProgress] = useState(null);
+
+    // Survey modal state
+    const [surveyModalVisible, setSurveyModalVisible] = useState(false);
+    const [surveyLoading, setSurveyLoading] = useState(false);
+    const [selectedMemberSurvey, setSelectedMemberSurvey] = useState(null);
+    const [memberSurveyData, setMemberSurveyData] = useState(null);
+
+    // Add render counter for debugging
+    const renderCount = useRef(0);
+    renderCount.current += 1;
 
     const navigate = useNavigate();
 
@@ -140,7 +155,7 @@ const CoachDashboard = () => {
         }
     };
 
-    const loadCoachProfile = async (token) => {
+    const loadCoachProfile = useCallback(async (token) => {
         try {
             const response = await axios.get('http://localhost:4000/api/coach/profile', {
                 headers: {
@@ -158,10 +173,12 @@ const CoachDashboard = () => {
                 handleLogout();
             }
         }
-    };
+    }, []);
 
-    const loadMembers = async (token) => {
+    const loadMembers = useCallback(async (token) => {
         try {
+            console.log(`CoachDashboard render #${renderCount.current} - Loading members...`);
+
             const response = await axios.get('http://localhost:4000/api/coach/members', {
                 headers: {
                     'Authorization': `Bearer ${token}`
@@ -170,15 +187,32 @@ const CoachDashboard = () => {
             });
 
             if (response.data.success) {
-                setMembers(response.data.data);
+                const membersData = response.data.data;
+
+                // Log for debugging
+                console.log('Raw members data from coach API:', membersData);
+
+                // Deduplicate by id to ensure unique members
+                const uniqueMembers = membersData.reduce((acc, member) => {
+                    const isDuplicate = acc.some(existing => existing.id === member.id);
+                    if (!isDuplicate) {
+                        acc.push(member);
+                    } else {
+                        console.warn('Duplicate member found and removed in CoachDashboard:', member);
+                    }
+                    return acc;
+                }, []);
+
+                console.log('Unique members after deduplication in CoachDashboard:', uniqueMembers);
+                setMembers(uniqueMembers);
             }
         } catch (error) {
             console.error('Error loading members:', error);
             message.error('Lỗi khi tải danh sách thành viên');
         }
-    };
+    }, []);
 
-    const loadStats = async (token) => {
+    const loadStats = useCallback(async (token) => {
         try {
             const response = await axios.get('http://localhost:4000/api/coach/stats', {
                 headers: {
@@ -194,7 +228,22 @@ const CoachDashboard = () => {
             console.error('Error loading stats:', error);
             message.error('Lỗi khi tải thống kê');
         }
-    };
+    }, []);
+
+    // Memoize the members data to prevent unnecessary re-renders
+    const memoizedMembers = useMemo(() => {
+        console.log('Memoizing members in CoachDashboard, current count:', members.length);
+        // Double-check for unique members by id
+        const uniqueMembers = members.reduce((acc, member) => {
+            const existing = acc.find(m => m.id === member.id);
+            if (!existing) {
+                acc.push(member);
+            }
+            return acc;
+        }, []);
+        console.log('Final unique members count in CoachDashboard:', uniqueMembers.length);
+        return uniqueMembers;
+    }, [members]);
 
     // Load member details
     const loadMemberDetails = async (memberId) => {
@@ -226,6 +275,31 @@ const CoachDashboard = () => {
         setSelectedMember(member);
         setMemberDetailsVisible(true);
         await loadMemberDetails(member.id);
+    };
+
+    // Handle view member survey
+    const handleViewMemberSurvey = async (member) => {
+        try {
+            setSelectedMemberSurvey(member);
+            setSurveyModalVisible(true);
+            setSurveyLoading(true);
+
+            const token = localStorage.getItem('coachToken');
+            const response = await axios.get(`http://localhost:4000/api/coach/member-surveys/${member.id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (response.data) {
+                setMemberSurveyData(response.data);
+            } else {
+                message.error('Không thể tải thông tin khảo sát của member');
+            }
+        } catch (error) {
+            console.error('Error loading member survey:', error);
+            message.error('Lỗi khi tải thông tin khảo sát');
+        } finally {
+            setSurveyLoading(false);
+        }
     };
 
     const handleLogout = async () => {
@@ -329,11 +403,6 @@ const CoachDashboard = () => {
             onClick: () => setActiveTab('profile'),
         },
         {
-            key: 'settings',
-            icon: <SettingOutlined />,
-            label: 'Cài đặt',
-        },
-        {
             type: 'divider',
         },
         {
@@ -358,7 +427,7 @@ const CoachDashboard = () => {
         {
             key: 'members',
             icon: <TeamOutlined />,
-            label: 'Thành viên',
+            label: 'Thành viên được phân công',
         },
         {
             key: 'progress',
@@ -379,6 +448,11 @@ const CoachDashboard = () => {
             key: 'feedback',
             icon: <StarOutlined />,
             label: 'Đánh giá',
+        },
+        {
+            key: 'survey',
+            icon: <FileTextOutlined />,
+            label: 'Khảo sát',
         },
     ];
 
@@ -450,14 +524,24 @@ const CoachDashboard = () => {
             title: 'Hành động',
             key: 'actions',
             render: (_, record) => (
-                <Button
-                    type="primary"
-                    size="small"
-                    icon={<EyeOutlined />}
-                    onClick={() => handleViewMemberDetails(record)}
-                >
-                    Xem chi tiết
-                </Button>
+                <Space>
+                    <Button
+                        type="primary"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => handleViewMemberDetails(record)}
+                    >
+                        Chi tiết
+                    </Button>
+                    <Button
+                        type="default"
+                        size="small"
+                        icon={<FormOutlined />}
+                        onClick={() => handleViewMemberSurvey(record)}
+                    >
+                        Khảo sát
+                    </Button>
+                </Space>
             ),
         },
     ];
@@ -467,54 +551,53 @@ const CoachDashboard = () => {
             {/* Statistics Cards */}
             <Row gutter={[24, 24]} className="mb-6">
                 <Col xs={24} sm={12} lg={6}>
-                    <Card className="text-center shadow-md hover:shadow-lg transition-shadow">
-                        <Statistic
-                            title="Tổng thành viên"
-                            value={stats.totalMembers}
-                            prefix={<TeamOutlined className="text-blue-500" />}
-                            valueStyle={{ color: '#1890ff' }}
-                        />
-                    </Card>
+                    <div className="coach-stat-card coach-animate-scale">
+                        <div className="coach-stat-icon primary">
+                            <TeamOutlined />
+                        </div>
+                        <div className="coach-stat-value">{stats.totalMembers}</div>
+                        <div className="coach-stat-title">Thành viên được phân công</div>
+                    </div>
                 </Col>
                 <Col xs={24} sm={12} lg={6}>
-                    <Card className="text-center shadow-md hover:shadow-lg transition-shadow">
-                        <Statistic
-                            title="Đang hỗ trợ"
-                            value={stats.activeMembers}
-                            prefix={<CheckCircleOutlined className="text-green-500" />}
-                            valueStyle={{ color: '#52c41a' }}
-                        />
-                    </Card>
+                    <div className="coach-stat-card coach-animate-scale" style={{ animationDelay: '0.1s' }}>
+                        <div className="coach-stat-icon success">
+                            <CheckCircleOutlined />
+                        </div>
+                        <div className="coach-stat-value">{stats.activeMembers}</div>
+                        <div className="coach-stat-title">Đang hỗ trợ</div>
+                    </div>
                 </Col>
                 <Col xs={24} sm={12} lg={6}>
-                    <Card className="text-center shadow-md hover:shadow-lg transition-shadow">
-                        <Statistic
-                            title="Hoàn thành"
-                            value={stats.completedPlans}
-                            prefix={<TrophyOutlined className="text-yellow-500" />}
-                            valueStyle={{ color: '#faad14' }}
-                        />
-                    </Card>
+                    <div className="coach-stat-card coach-animate-scale" style={{ animationDelay: '0.2s' }}>
+                        <div className="coach-stat-icon warning">
+                            <TrophyOutlined />
+                        </div>
+                        <div className="coach-stat-value">{stats.completedPlans}</div>
+                        <div className="coach-stat-title">Hoàn thành</div>
+                    </div>
                 </Col>
                 <Col xs={24} sm={12} lg={6}>
-                    <Card className="text-center shadow-md hover:shadow-lg transition-shadow">
-                        <Statistic
-                            title="Tỷ lệ thành công"
-                            value={stats.successRate}
-                            suffix="%"
-                            prefix={<BarChartOutlined className="text-purple-500" />}
-                            valueStyle={{ color: '#722ed1' }}
-                        />
-                    </Card>
+                    <div className="coach-stat-card coach-animate-scale" style={{ animationDelay: '0.3s' }}>
+                        <div className="coach-stat-icon info">
+                            <BarChartOutlined />
+                        </div>
+                        <div className="coach-stat-value">{stats.successRate}%</div>
+                        <div className="coach-stat-title">Tỷ lệ thành công</div>
+                    </div>
                 </Col>
             </Row>
 
             {/* Welcome Card */}
             <Row gutter={[24, 24]}>
                 <Col span={24}>
-                    <Card className="bg-gradient-to-r from-blue-500 to-purple-600 text-white border-0 shadow-lg">
+                    <Card className="coach-card coach-glass" style={{
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                        color: 'white',
+                        border: 'none'
+                    }}>
                         <div className="text-center">
-                            <CrownOutlined className="text-4xl mb-4" />
+                            <CrownOutlined className="text-4xl mb-4" style={{ color: 'white' }} />
                             <Title level={2} className="text-white mb-4">
                                 Chào mừng đến với Coach Portal!
                             </Title>
@@ -523,25 +606,25 @@ const CoachDashboard = () => {
                             </Paragraph>
                             <Row gutter={[16, 16]} justify="center">
                                 <Col xs={24} sm={12} md={6}>
-                                    <div className="text-center">
+                                    <div className="text-center p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.1)' }}>
                                         <TeamOutlined className="text-2xl mb-2" />
-                                        <div>Quản lý thành viên</div>
+                                        <div>Quản lý thành viên được phân công</div>
                                     </div>
                                 </Col>
                                 <Col xs={24} sm={12} md={6}>
-                                    <div className="text-center">
+                                    <div className="text-center p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.1)' }}>
                                         <BarChartOutlined className="text-2xl mb-2" />
                                         <div>Theo dõi tiến trình</div>
                                     </div>
                                 </Col>
                                 <Col xs={24} sm={12} md={6}>
-                                    <div className="text-center">
+                                    <div className="text-center p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.1)' }}>
                                         <TrophyOutlined className="text-2xl mb-2" />
                                         <div>Ghi nhận thành tích</div>
                                     </div>
                                 </Col>
                                 <Col xs={24} sm={12} md={6}>
-                                    <div className="text-center">
+                                    <div className="text-center p-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.1)' }}>
                                         <UserOutlined className="text-2xl mb-2" />
                                         <div>Hỗ trợ cá nhân</div>
                                     </div>
@@ -560,22 +643,21 @@ const CoachDashboard = () => {
                 <Row gutter={[24, 24]}>
                     {/* Header with Avatar and Basic Info */}
                     <Col span={24}>
-                        <Card className="shadow-md">
-                            <div className="flex items-center mb-6">
+                        <div className="coach-profile-section">
+                            <div className="coach-profile-header">
                                 <Avatar
                                     size={120}
                                     src={coachProfile.Avatar}
                                     icon={<UserOutlined />}
-                                    className="mr-6"
-                                    style={{ border: '4px solid #1890ff' }}
+                                    className="coach-profile-avatar"
                                 />
-                                <div className="flex-1">
+                                <div className="coach-profile-info">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <Title level={2} className="mb-2">{getCoachDisplayName()}</Title>
-                                            <Text className="text-lg text-gray-600">
+                                            <h2>{getCoachDisplayName()}</h2>
+                                            <p>
                                                 {coachProfile.professionalProfile?.Specialization || 'Huấn luyện viên chuyên nghiệp'}
-                                            </Text>
+                                            </p>
                                             {coachProfile.professionalProfile?.IsVerified && (
                                                 <div className="mt-2">
                                                     <Tag color="green" icon={<CheckCircleOutlined />}>
@@ -588,6 +670,7 @@ const CoachDashboard = () => {
                                             type="primary"
                                             icon={<EditOutlined />}
                                             onClick={handleEditProfile}
+                                            className="coach-btn-primary"
                                         >
                                             Chỉnh sửa
                                         </Button>
@@ -599,49 +682,62 @@ const CoachDashboard = () => {
                             {coachProfile.professionalProfile && (
                                 <Row gutter={[16, 16]} className="mb-6">
                                     <Col xs={12} sm={6}>
-                                        <Statistic
-                                            title="Kinh nghiệm"
-                                            value={coachProfile.professionalProfile.YearsOfExperience}
-                                            suffix="năm"
-                                            prefix={<CalendarOutlined />}
-                                        />
-                                    </Col>
-                                    <Col xs={12} sm={6}>
-                                        <Statistic
-                                            title="Clients hỗ trợ"
-                                            value={coachProfile.professionalProfile.TotalClientsServed}
-                                            prefix={<TeamOutlined />}
-                                        />
-                                    </Col>
-                                    <Col xs={12} sm={6}>
-                                        <Statistic
-                                            title="Tỷ lệ thành công"
-                                            value={coachProfile.professionalProfile.SuccessRate}
-                                            suffix="%"
-                                            prefix={<TrophyOutlined />}
-                                        />
-                                    </Col>
-                                    <Col xs={12} sm={6}>
-                                        <div className="text-center">
-                                            <div className="text-gray-500 text-sm mb-1">Đánh giá</div>
-                                            <div className="flex items-center justify-center">
-                                                <Rate
-                                                    disabled
-                                                    defaultValue={coachProfile.professionalProfile.AverageRating}
-                                                    allowHalf
-                                                />
-                                                <span className="ml-2 text-lg font-medium">
-                                                    {coachProfile.professionalProfile.AverageRating}/5.0
-                                                </span>
+                                        <div className="coach-stat-card" style={{ padding: '16px' }}>
+                                            <div className="coach-stat-icon primary" style={{ width: '40px', height: '40px', fontSize: '18px' }}>
+                                                <CalendarOutlined />
                                             </div>
-                                            <div className="text-gray-500 text-xs">
-                                                ({coachProfile.reviewsCount} đánh giá)
+                                            <div className="coach-stat-value" style={{ fontSize: '24px' }}>
+                                                {coachProfile.professionalProfile.YearsOfExperience}
+                                            </div>
+                                            <div className="coach-stat-title">Năm kinh nghiệm</div>
+                                        </div>
+                                    </Col>
+                                    <Col xs={12} sm={6}>
+                                        <div className="coach-stat-card" style={{ padding: '16px' }}>
+                                            <div className="coach-stat-icon success" style={{ width: '40px', height: '40px', fontSize: '18px' }}>
+                                                <TeamOutlined />
+                                            </div>
+                                            <div className="coach-stat-value" style={{ fontSize: '24px' }}>
+                                                {coachProfile.professionalProfile.TotalClientsServed}
+                                            </div>
+                                            <div className="coach-stat-title">Clients hỗ trợ</div>
+                                        </div>
+                                    </Col>
+                                    <Col xs={12} sm={6}>
+                                        <div className="coach-stat-card" style={{ padding: '16px' }}>
+                                            <div className="coach-stat-icon warning" style={{ width: '40px', height: '40px', fontSize: '18px' }}>
+                                                <TrophyOutlined />
+                                            </div>
+                                            <div className="coach-stat-value" style={{ fontSize: '24px' }}>
+                                                {coachProfile.professionalProfile.SuccessRate}%
+                                            </div>
+                                            <div className="coach-stat-title">Tỷ lệ thành công</div>
+                                        </div>
+                                    </Col>
+                                    <Col xs={12} sm={6}>
+                                        <div className="coach-stat-card" style={{ padding: '16px' }}>
+                                            <div className="text-center">
+                                                <div className="coach-stat-title mb-2">Đánh giá</div>
+                                                <div className="flex items-center justify-center">
+                                                    <Rate
+                                                        disabled
+                                                        defaultValue={coachProfile.professionalProfile.AverageRating}
+                                                        allowHalf
+                                                        style={{ fontSize: '16px' }}
+                                                    />
+                                                </div>
+                                                <div className="coach-stat-value" style={{ fontSize: '18px', marginTop: '4px' }}>
+                                                    {coachProfile.professionalProfile.AverageRating}/5.0
+                                                </div>
+                                                <div className="coach-stat-title" style={{ fontSize: '12px' }}>
+                                                    ({coachProfile.reviewsCount} đánh giá)
+                                                </div>
                                             </div>
                                         </div>
                                     </Col>
                                 </Row>
                             )}
-                        </Card>
+                        </div>
                     </Col>
 
                     {/* Basic Information */}
@@ -651,7 +747,7 @@ const CoachDashboard = () => {
                                 <UserOutlined className="mr-2" />
                                 <span>Thông tin cơ bản</span>
                             </div>
-                        } className="shadow-md h-full">
+                        } className="coach-card h-full">
                             <Descriptions column={1} size="small">
                                 <Descriptions.Item
                                     label={<span><MailOutlined className="mr-2" />Email</span>}
@@ -884,19 +980,38 @@ const CoachDashboard = () => {
     );
 
     const renderMembers = () => (
-        <Card title="Danh sách thành viên" className="shadow-md">
-            <Table
-                columns={memberColumns}
-                dataSource={members}
-                rowKey="id"
-                pagination={{
-                    pageSize: 10,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} thành viên`,
-                }}
-                scroll={{ x: 800 }}
-            />
+        <Card title="Danh sách thành viên được phân công" className="coach-card">
+            {memoizedMembers.length > 0 ? (
+                <Table
+                    columns={memberColumns}
+                    dataSource={memoizedMembers}
+                    rowKey="id"
+                    className="coach-table"
+                    pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showQuickJumper: true,
+                        showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} thành viên`,
+                    }}
+                    scroll={{ x: 800 }}
+                />
+            ) : (
+                <div className="coach-empty">
+                    <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={
+                            <div className="text-center">
+                                <Text className="text-lg text-gray-600 mb-2 block">
+                                    Chưa có thành viên nào được phân công
+                                </Text>
+                                <Text className="text-gray-500">
+                                    Admin sẽ phân công thành viên cho bạn khi có yêu cầu hỗ trợ
+                                </Text>
+                            </div>
+                        }
+                    />
+                </div>
+            )}
         </Card>
     );
 
@@ -911,14 +1026,14 @@ const CoachDashboard = () => {
         }
 
         return (
-            <Card title="Theo dõi tiến trình thành viên" className="shadow-md">
+            <Card title="Theo dõi tiến trình thành viên được phân công" className="coach-card">
                 <div className="mb-4">
                     <Text className="text-gray-600">
-                        Chọn một thành viên để xem tiến trình chi tiết của họ
+                        Chọn một thành viên được phân công để xem tiến trình chi tiết của họ
                     </Text>
                 </div>
 
-                {members.length > 0 ? (
+                {memoizedMembers.length > 0 ? (
                     <Table
                         columns={[
                             {
@@ -958,14 +1073,16 @@ const CoachDashboard = () => {
                                         type="primary"
                                         icon={<BarChartOutlined />}
                                         onClick={() => setSelectedMemberForProgress(record.id)}
+                                        className="coach-btn-primary"
                                     >
                                         Xem tiến trình
                                     </Button>
                                 ),
                             },
                         ]}
-                        dataSource={members}
+                        dataSource={memoizedMembers}
                         rowKey="id"
+                        className="coach-table"
                         pagination={{
                             pageSize: 8,
                             showSizeChanger: false,
@@ -974,10 +1091,21 @@ const CoachDashboard = () => {
                         scroll={{ x: 600 }}
                     />
                 ) : (
-                    <Empty
-                        description="Chưa có thành viên nào"
-                        className="py-10"
-                    />
+                    <div className="coach-empty">
+                        <Empty
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                            description={
+                                <div className="text-center">
+                                    <Text className="text-lg text-gray-600 mb-2 block">
+                                        Chưa có thành viên nào để theo dõi
+                                    </Text>
+                                    <Text className="text-gray-500">
+                                        Bạn cần được admin phân công thành viên trước khi có thể theo dõi tiến trình
+                                    </Text>
+                                </div>
+                            }
+                        />
+                    </div>
                 )}
             </Card>
         );
@@ -1003,6 +1131,8 @@ const CoachDashboard = () => {
                 return renderAppointments();
             case 'feedback':
                 return <CoachFeedbackView />;
+            case 'survey':
+                return <CoachSurveyView />;
             default:
                 return renderDashboard();
         }
@@ -1015,7 +1145,7 @@ const CoachDashboard = () => {
             case 'profile':
                 return 'Thông tin cá nhân';
             case 'members':
-                return 'Quản lý thành viên';
+                return 'Thành viên được phân công';
             case 'progress':
                 return 'Theo dõi tiến trình';
             case 'chat':
@@ -1024,6 +1154,8 @@ const CoachDashboard = () => {
                 return 'Lịch hẹn tư vấn';
             case 'feedback':
                 return 'Đánh giá từ thành viên';
+            case 'survey':
+                return 'Khảo sát';
             default:
                 return 'Dashboard';
         }
@@ -1036,15 +1168,17 @@ const CoachDashboard = () => {
             case 'profile':
                 return 'Xem và chỉnh sửa thông tin cá nhân, hồ sơ chuyên môn của bạn.';
             case 'members':
-                return 'Quản lý và theo dõi tất cả thành viên trong hệ thống.';
+                return 'Quản lý và theo dõi các thành viên được admin phân công cho bạn. Chỉ những thành viên được phân công mới xuất hiện trong danh sách này.';
             case 'progress':
-                return 'Theo dõi tiến trình cai thuốc của các thành viên.';
+                return 'Theo dõi tiến trình cai thuốc của các thành viên được phân công cho bạn.';
             case 'chat':
-                return 'Chat với các thành viên trong hệ thống.';
+                return 'Chat với các thành viên được phân công cho bạn.';
             case 'appointments':
-                return 'Quản lý lịch hẹn tư vấn với các thành viên. Tạo, xem và theo dõi các cuộc hẹn.';
+                return 'Quản lý lịch hẹn tư vấn với các thành viên được phân công. Tạo, xem và theo dõi các cuộc hẹn.';
             case 'feedback':
                 return 'Xem và quản lý tất cả đánh giá từ các thành viên đã tư vấn. Theo dõi thống kê và cải thiện chất lượng dịch vụ.';
+            case 'survey':
+                return 'Xem và quản lý tất cả khảo sát đã thực hiện. Theo dõi thống kê và cải thiện chất lượng dịch vụ.';
             default:
                 return `Chào mừng bạn trở lại, ${getCoachDisplayName()}! Đây là trang quản lý dành cho huấn luyện viên.`;
         }
@@ -1063,44 +1197,26 @@ const CoachDashboard = () => {
 
     return (
         <>
-            <Layout className="min-h-screen">
+            <Layout className="coach-dashboard min-h-screen">
                 {/* Header */}
-                <Header style={{
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '0 24px'
-                }}>
-                    <div className="flex items-center">
-                        <div className="flex items-center justify-center w-10 h-10 bg-white bg-opacity-20 rounded-lg mr-3">
+                <Header className="coach-header">
+                    <div className="coach-header-brand">
+                        <div className="coach-header-icon">
                             <CrownOutlined className="text-white text-lg" />
                         </div>
-                        <Title level={3} className="mb-0 text-white">
+                        <Title level={3} className="coach-header-title">
                             Coach Portal
                         </Title>
                     </div>
 
                     <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-                        <div style={{
-                            cursor: 'pointer',
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            background: 'rgba(255,255,255,0.1)',
-                            backdropFilter: 'blur(10px)',
-                            border: '1px solid rgba(255,255,255,0.2)',
-                            transition: 'all 0.3s ease'
-                        }}>
+                        <div className="coach-user-dropdown">
                             <Space>
-                                <span className="text-white font-medium">{getCoachDisplayName()}</span>
+                                <span className="coach-user-name">{getCoachDisplayName()}</span>
                                 <Avatar
                                     src={coachProfile?.Avatar}
                                     icon={!coachProfile?.Avatar && <UserOutlined />}
-                                    style={{
-                                        background: 'linear-gradient(45deg, #ff6b6b, #4ecdc4)',
-                                        border: '2px solid rgba(255,255,255,0.3)'
-                                    }}
+                                    className="coach-user-avatar"
                                 />
                             </Space>
                         </div>
@@ -1113,28 +1229,28 @@ const CoachDashboard = () => {
                         collapsible
                         collapsed={collapsed}
                         onCollapse={setCollapsed}
-                        className="bg-white shadow-lg"
+                        className="coach-sidebar"
                         width={250}
                     >
-                        <div className="p-4">
+                        <div className="coach-sidebar-profile">
                             {!collapsed && (
-                                <div className="text-center mb-6">
+                                <>
                                     <Avatar
                                         size={64}
                                         src={coachProfile?.Avatar}
                                         icon={!coachProfile?.Avatar && <UserOutlined />}
-                                        className="bg-gradient-to-r from-blue-500 to-purple-600"
+                                        className="coach-sidebar-avatar"
                                     />
-                                    <div className="mt-2">
-                                        <Text strong className="text-gray-700">
+                                    <div>
+                                        <Text className="coach-sidebar-name">
                                             {getCoachDisplayName()}
                                         </Text>
                                         <br />
-                                        <Text className="text-gray-500 text-sm">
+                                        <Text className="coach-sidebar-role">
                                             Huấn luyện viên
                                         </Text>
                                     </div>
-                                </div>
+                                </>
                             )}
                         </div>
 
@@ -1142,23 +1258,24 @@ const CoachDashboard = () => {
                             mode="inline"
                             selectedKeys={[activeTab]}
                             items={sidebarMenuItems}
-                            className="border-r-0"
                             onClick={({ key }) => setActiveTab(key)}
                         />
                     </Sider>
 
                     {/* Content */}
-                    <Content className="p-6 bg-gray-50">
-                        <div className="mb-6">
-                            <Title level={2} className="text-gray-800">
+                    <Content className="coach-content">
+                        <div className="coach-content-header coach-animate-slide-up">
+                            <Title level={2} className="coach-content-title">
                                 {getPageTitle()}
                             </Title>
-                            <Paragraph className="text-gray-600">
+                            <Paragraph className="coach-content-description">
                                 {getPageDescription()}
                             </Paragraph>
                         </div>
 
-                        {renderContent()}
+                        <div className="coach-animate-fade-left">
+                            {renderContent()}
+                        </div>
                     </Content>
                 </Layout>
             </Layout>
@@ -1175,13 +1292,14 @@ const CoachDashboard = () => {
                 onCancel={handleCancelEdit}
                 footer={null}
                 width={800}
+                className="coach-modal"
                 style={{ top: 20 }}
             >
                 <Form
                     form={editForm}
                     layout="vertical"
                     onFinish={handleSaveProfile}
-                    className="mt-4"
+                    className="coach-form mt-4"
                 >
                     <div className="mb-6">
                         <Title level={4}>Thông tin cơ bản</Title>
@@ -1342,7 +1460,7 @@ const CoachDashboard = () => {
                                     <InputNumber
                                         min={0}
                                         formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                        parser={value => value.replace(/\$\s?|(,*)/g, '')}
+                                        parser={value => value.replace(/VNĐ\s?|(,*)/g, '')}
                                         placeholder="200000"
                                         style={{ width: '100%' }}
                                     />
@@ -1356,7 +1474,7 @@ const CoachDashboard = () => {
                                     <InputNumber
                                         min={0}
                                         formatter={value => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                        parser={value => value.replace(/\$\s?|(,*)/g, '')}
+                                        parser={value => value.replace(/VNĐ\s?|(,*)/g, '')}
                                         placeholder="750000"
                                         style={{ width: '100%' }}
                                     />
@@ -1409,6 +1527,165 @@ const CoachDashboard = () => {
                 loading={memberDetailsLoading}
                 selectedMember={selectedMember}
             />
+
+            {/* Member Survey Modal */}
+            <Modal
+                title={
+                    selectedMemberSurvey ? (
+                        <div className="flex items-center">
+                            <FormOutlined className="mr-2" />
+                            <span>Khảo sát của {selectedMemberSurvey.fullName}</span>
+                        </div>
+                    ) : 'Khảo sát của Member'
+                }
+                open={surveyModalVisible}
+                onCancel={() => {
+                    setSurveyModalVisible(false);
+                    setSelectedMemberSurvey(null);
+                    setMemberSurveyData(null);
+                }}
+                footer={null}
+                width={900}
+                style={{ top: 20 }}
+            >
+                {surveyLoading ? (
+                    <div style={{ textAlign: 'center', padding: '50px' }}>
+                        <Spin size="large" tip="Đang tải thông tin khảo sát..." />
+                    </div>
+                ) : memberSurveyData ? (
+                    <div>
+                        {/* Member Info */}
+                        <Card style={{ marginBottom: '16px' }}>
+                            <Row gutter={16}>
+                                <Col span={8}>
+                                    <div style={{ textAlign: 'center' }}>
+                                        <Avatar
+                                            src={selectedMemberSurvey?.avatar}
+                                            icon={<UserOutlined />}
+                                            size={80}
+                                        />
+                                        <div style={{ marginTop: '8px', fontWeight: 'bold' }}>
+                                            {selectedMemberSurvey?.fullName}
+                                        </div>
+                                        <div style={{ color: '#666' }}>
+                                            {selectedMemberSurvey?.email}
+                                        </div>
+                                    </div>
+                                </Col>
+                                <Col span={16}>
+                                    <Descriptions column={2} size="small">
+                                        <Descriptions.Item label="Trạng thái membership">
+                                            {memberSurveyData.member?.MembershipStatus === 'active' ? (
+                                                <Tag color="green">Đang hoạt động</Tag>
+                                            ) : (
+                                                <Tag color="default">Không hoạt động</Tag>
+                                            )}
+                                        </Descriptions.Item>
+                                        <Descriptions.Item label="Ngày bắt đầu">
+                                            {memberSurveyData.member?.MembershipStartDate ?
+                                                new Date(memberSurveyData.member.MembershipStartDate).toLocaleDateString('vi-VN') :
+                                                'N/A'
+                                            }
+                                        </Descriptions.Item>
+                                        <Descriptions.Item label="Ngày kết thúc">
+                                            {memberSurveyData.member?.MembershipEndDate ?
+                                                new Date(memberSurveyData.member.MembershipEndDate).toLocaleDateString('vi-VN') :
+                                                'N/A'
+                                            }
+                                        </Descriptions.Item>
+                                        <Descriptions.Item label="Tổng câu trả lời">
+                                            {memberSurveyData.answers?.filter(a => a.AnswerText && a.AnswerText.trim()).length || 0} / {memberSurveyData.answers?.length || 0}
+                                        </Descriptions.Item>
+                                    </Descriptions>
+                                </Col>
+                            </Row>
+                        </Card>
+
+                        {/* Survey Progress */}
+                        <Card style={{ marginBottom: '16px' }}>
+                            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                                <Title level={4}>Tiến độ khảo sát</Title>
+                                <Progress
+                                    type="circle"
+                                    percent={Math.round(
+                                        ((memberSurveyData.answers?.filter(a => a.AnswerText && a.AnswerText.trim()).length || 0) /
+                                            (memberSurveyData.answers?.length || 1)) * 100
+                                    )}
+                                    status="active"
+                                />
+                            </div>
+                        </Card>
+
+                        {/* Survey Answers */}
+                        <Card title="Chi tiết câu trả lời">
+                            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                {memberSurveyData.answers?.map((answer, index) => (
+                                    <Card
+                                        key={answer.QuestionID}
+                                        size="small"
+                                        style={{
+                                            marginBottom: '12px',
+                                            border: answer.AnswerText ? '1px solid #d9d9d9' : '1px solid #ffccc7',
+                                            backgroundColor: answer.AnswerText ? '#ffffff' : '#fff2f0'
+                                        }}
+                                    >
+                                        <div style={{ marginBottom: '8px' }}>
+                                            <Text strong style={{ fontSize: '14px' }}>
+                                                Câu {index + 1}: {answer.QuestionText}
+                                            </Text>
+                                            <div style={{ float: 'right' }}>
+                                                {answer.AnswerText && answer.AnswerText.trim() ? (
+                                                    <Tag color="green" icon={<CheckCircleOutlined />}>
+                                                        Đã trả lời
+                                                    </Tag>
+                                                ) : (
+                                                    <Tag color="red" icon={<ClockCircleOutlined />}>
+                                                        Chưa trả lời
+                                                    </Tag>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {answer.AnswerText && answer.AnswerText.trim() ? (
+                                            <div>
+                                                <div style={{
+                                                    backgroundColor: '#f6ffed',
+                                                    padding: '8px',
+                                                    borderRadius: '4px',
+                                                    border: '1px solid #b7eb8f'
+                                                }}>
+                                                    <Text>{answer.AnswerText}</Text>
+                                                </div>
+                                                {answer.SubmittedAt && (
+                                                    <div style={{ marginTop: '4px', textAlign: 'right' }}>
+                                                        <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                            Trả lời lúc: {new Date(answer.SubmittedAt).toLocaleString('vi-VN')}
+                                                        </Text>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div style={{
+                                                backgroundColor: '#fff2f0',
+                                                padding: '8px',
+                                                borderRadius: '4px',
+                                                border: '1px dashed #ffccc7',
+                                                textAlign: 'center'
+                                            }}>
+                                                <Text type="secondary" style={{ fontStyle: 'italic' }}>
+                                                    Member chưa trả lời câu hỏi này
+                                                </Text>
+                                            </div>
+                                        )}
+                                    </Card>
+                                ))}
+                            </div>
+                        </Card>
+                    </div>
+                ) : (
+                    <Empty description="Không có dữ liệu khảo sát" />
+                )}
+            </Modal>
         </>
     );
 };

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
 import { Layout, Menu, Button, Avatar, Dropdown, Space, Drawer } from 'antd';
-import { UserOutlined, LogoutOutlined, SettingOutlined, DashboardOutlined, HomeOutlined, BookOutlined, TeamOutlined, MenuOutlined, FormOutlined, BulbOutlined, TrophyOutlined, CommentOutlined, MessageOutlined, CalendarOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, SettingOutlined, DashboardOutlined, HomeOutlined, BookOutlined, TeamOutlined, MenuOutlined, FormOutlined, BulbOutlined, TrophyOutlined, CommentOutlined, MessageOutlined, CalendarOutlined, FileTextOutlined } from '@ant-design/icons';
 import { logout } from '../../store/slices/authSlice';
 import MemberChat from '../chat/MemberChat';
 
@@ -302,12 +302,32 @@ const Navbar = () => {
                             className="navbar-coach-btn"
                             style={{
                                 color: '#fff',
-                                border: '1px solid rgba(255,255,255,0.3)',
+                                border: '1px solid #4ecdc4',
                                 borderRadius: '6px',
-                                transition: 'all 0.3s ease'
+                                background: 'linear-gradient(45deg, rgba(78, 205, 196, 0.1), rgba(78, 205, 196, 0.2))',
+                                transition: 'all 0.3s ease',
+                                fontWeight: '500',
+                                position: 'relative',
+                                overflow: 'hidden'
                             }}
                         >
                             <Link to="/coach/login" style={{ color: 'inherit' }}>Đăng nhập Coach</Link>
+                        </Button>
+                        <Button
+                            type="text"
+                            className="navbar-admin-btn"
+                            style={{
+                                color: '#fff',
+                                border: '1px solid #ff6b6b',
+                                borderRadius: '6px',
+                                background: 'linear-gradient(45deg, rgba(255, 107, 107, 0.1), rgba(255, 107, 107, 0.2))',
+                                transition: 'all 0.3s ease',
+                                fontWeight: '500',
+                                position: 'relative',
+                                overflow: 'hidden'
+                            }}
+                        >
+                            <Link to="/admin/login" style={{ color: 'inherit' }}>Đăng nhập Admin</Link>
                         </Button>
                         <Button
                             type="primary"
@@ -370,6 +390,9 @@ const Navbar = () => {
                                 </Button>
                                 <Button block type="text" className="mobile-coach-btn" style={{ marginBottom: '8px', color: '#fff' }}>
                                     <Link to="/coach/login" style={{ color: 'inherit' }}>Đăng nhập Coach</Link>
+                                </Button>
+                                <Button block type="text" className="mobile-admin-btn" style={{ marginBottom: '8px', color: '#fff' }}>
+                                    <Link to="/admin/login" style={{ color: 'inherit' }}>Đăng nhập Admin</Link>
                                 </Button>
                                 <Button block type="primary" className="mobile-register-btn" style={{ background: 'linear-gradient(45deg, #ff6b6b, #4ecdc4)', border: 'none' }}>
                                     <Link to="/register" style={{ color: '#fff' }}>Đăng ký</Link>

@@ -8,16 +8,16 @@ router.get('/', async (req, res) => {
     try {
         const result = await pool.request()
             .query(`
-        SELECT 
-            p.*,
-            u.FirstName as AuthorFirstName,
-            u.LastName as AuthorLastName,
-            (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
-        FROM BlogPosts p
-        JOIN Users u ON p.AuthorID = u.UserID
-        WHERE p.Status IN ('published', 'Pending')
-        ORDER BY p.CreatedAt DESC
-      `);
+                SELECT 
+                    p.*,
+                    u.FirstName as AuthorFirstName,
+                    u.LastName as AuthorLastName,
+                    (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
+                FROM BlogPosts p
+                JOIN Users u ON p.AuthorID = u.UserID
+                WHERE p.Status = 'published'
+                ORDER BY p.CreatedAt DESC
+            `);
 
         res.json({
             success: true,
@@ -40,20 +40,20 @@ router.get('/:postId', async (req, res) => {
         const result = await pool.request()
             .input('PostID', postId)
             .query(`
-        SELECT 
-            p.*,
-            u.FirstName as AuthorFirstName,
-            u.LastName as AuthorLastName,
-            (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
-        FROM BlogPosts p
-        JOIN Users u ON p.AuthorID = u.UserID
-        WHERE p.PostID = @PostID AND p.Status IN ('published', 'Pending')
-      `);
+                SELECT 
+                    p.*,
+                    u.FirstName as AuthorFirstName,
+                    u.LastName as AuthorLastName,
+                    (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
+                FROM BlogPosts p
+                JOIN Users u ON p.AuthorID = u.UserID
+                WHERE p.PostID = @PostID AND p.Status = 'published'
+            `);
 
         if (result.recordset.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: 'Blog post not found'
+                message: 'Blog post not found or not published'
             });
         }
 
@@ -75,7 +75,7 @@ router.get('/:postId', async (req, res) => {
     }
 });
 
-// Create blog post (users and coaches can post, auto-approved for now)
+// Create blog post (users and coaches can post, but need approval)
 router.post('/', protect, async (req, res) => {
     try {
         const { title, content, metaDescription, thumbnailURL } = req.body;
@@ -87,22 +87,39 @@ router.post('/', protect, async (req, res) => {
             });
         }
 
+        // Determine status based on user role
+        let status = 'Pending'; // Default to pending for members/coaches
+        let publishedAt = null;
+
+        // Only admin can publish immediately
+        if (req.user.Role === 'admin') {
+            status = 'published';
+            publishedAt = new Date();
+        }
+
         const result = await pool.request()
             .input('Title', title)
             .input('Content', content)
             .input('MetaDescription', metaDescription || '')
             .input('ThumbnailURL', thumbnailURL || '')
             .input('AuthorID', req.user.UserID)
+            .input('Status', status)
+            .input('PublishedAt', publishedAt)
             .query(`
-        INSERT INTO BlogPosts (Title, Content, MetaDescription, ThumbnailURL, AuthorID, Status, PublishedAt)
-        OUTPUT INSERTED.*
-        VALUES (@Title, @Content, @MetaDescription, @ThumbnailURL, @AuthorID, 'published', GETDATE())
-      `);
+                INSERT INTO BlogPosts (Title, Content, MetaDescription, ThumbnailURL, AuthorID, Status, PublishedAt)
+                OUTPUT INSERTED.*
+                VALUES (@Title, @Content, @MetaDescription, @ThumbnailURL, @AuthorID, @Status, @PublishedAt)
+            `);
+
+        const responseMessage = status === 'published'
+            ? 'Blog post created and published successfully'
+            : 'Blog post created successfully and is pending approval';
 
         res.status(201).json({
             success: true,
             data: result.recordset[0],
-            message: 'Blog post created successfully'
+            message: responseMessage,
+            status: status
         });
     } catch (error) {
         console.error(error);
@@ -164,27 +181,72 @@ router.delete('/:postId', protect, async (req, res) => {
     try {
         const { postId } = req.params;
 
-        const result = await pool.request()
-            .input('PostID', postId)
-            .input('AuthorID', req.user.UserID)
-            .query(`
-        DELETE FROM BlogPosts 
-        WHERE PostID = @PostID AND AuthorID = @AuthorID
-      `);
+        // Check if user is admin or the author of the post
+        if (req.user.role === 'admin') {
+            // Admin can delete any blog post
+            // First delete all comments for this blog post
+            await pool.request()
+                .input('PostID', postId)
+                .query(`
+                DELETE FROM Comments
+                WHERE PostID = @PostID
+            `);
 
-        if (result.rowsAffected[0] === 0) {
-            return res.status(404).json({
-                success: false,
-                message: 'Blog post not found or you are not authorized to delete it'
+            // Then delete the blog post
+            const result = await pool.request()
+                .input('PostID', postId)
+                .query(`
+                DELETE FROM BlogPosts 
+                WHERE PostID = @PostID
+            `);
+
+            if (result.rowsAffected[0] === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Blog post not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Blog post deleted successfully by admin'
+            });
+        } else {
+            // Regular user can only delete their own blog posts
+            // First delete all comments for this blog post if user owns it
+            await pool.request()
+                .input('PostID', postId)
+                .input('AuthorID', req.user.UserID)
+                .query(`
+                DELETE FROM Comments
+                WHERE PostID = @PostID AND PostID IN (
+                    SELECT PostID FROM BlogPosts WHERE PostID = @PostID AND AuthorID = @AuthorID
+                )
+            `);
+
+            // Then delete the blog post
+            const result = await pool.request()
+                .input('PostID', postId)
+                .input('AuthorID', req.user.UserID)
+                .query(`
+                DELETE FROM BlogPosts 
+                WHERE PostID = @PostID AND AuthorID = @AuthorID
+            `);
+
+            if (result.rowsAffected[0] === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Blog post not found or you are not authorized to delete it'
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Blog post deleted successfully'
             });
         }
-
-        res.json({
-            success: true,
-            message: 'Blog post deleted successfully'
-        });
     } catch (error) {
-        console.error(error);
+        console.error('Error deleting blog post:', error);
         res.status(500).json({
             success: false,
             message: 'Error deleting blog post'
@@ -260,22 +322,22 @@ router.get('/:postId/comments', async (req, res) => {
     }
 });
 
-// Get user's own posts
+// Get user's own posts (including pending)
 router.get('/my/posts', protect, async (req, res) => {
     try {
         const result = await pool.request()
             .input('AuthorID', req.user.UserID)
             .query(`
-        SELECT 
-            p.*,
-            u.FirstName as AuthorFirstName,
-            u.LastName as AuthorLastName,
-            (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
-        FROM BlogPosts p
-        JOIN Users u ON p.AuthorID = u.UserID
-        WHERE p.AuthorID = @AuthorID
-        ORDER BY p.CreatedAt DESC
-      `);
+                SELECT 
+                    p.*,
+                    u.FirstName as AuthorFirstName,
+                    u.LastName as AuthorLastName,
+                    (SELECT COUNT(*) FROM Comments c WHERE c.PostID = p.PostID AND c.Status = 'approved') as CommentCount
+                FROM BlogPosts p
+                JOIN Users u ON p.AuthorID = u.UserID
+                WHERE p.AuthorID = @AuthorID
+                ORDER BY p.CreatedAt DESC
+            `);
 
         res.json({
             success: true,
@@ -323,6 +385,98 @@ router.put('/comments/:commentId', protect, authorize('admin'), async (req, res)
         res.status(500).json({
             success: false,
             message: 'Error moderating comment'
+        });
+    }
+});
+
+// Get user notifications
+router.get('/notifications', protect, async (req, res) => {
+    try {
+        const result = await pool.request()
+            .input('UserID', req.user.UserID)
+            .query(`
+                SELECT 
+                    NotificationID,
+                    Type,
+                    Title,
+                    Message,
+                    RelatedID,
+                    IsRead,
+                    CreatedAt
+                FROM Notifications
+                WHERE UserID = @UserID
+                ORDER BY CreatedAt DESC
+            `);
+
+        res.json({
+            success: true,
+            data: result.recordset
+        });
+    } catch (error) {
+        console.error('Error getting notifications:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error getting notifications'
+        });
+    }
+});
+
+// Mark notification as read
+router.patch('/notifications/:notificationId/read', protect, async (req, res) => {
+    try {
+        const { notificationId } = req.params;
+
+        const result = await pool.request()
+            .input('NotificationID', notificationId)
+            .input('UserID', req.user.UserID)
+            .query(`
+                UPDATE Notifications
+                SET IsRead = 1
+                WHERE NotificationID = @NotificationID AND UserID = @UserID
+            `);
+
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Notification not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Notification marked as read'
+        });
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error marking notification as read'
+        });
+    }
+});
+
+// Get unread notifications count
+router.get('/notifications/unread-count', protect, async (req, res) => {
+    try {
+        const result = await pool.request()
+            .input('UserID', req.user.UserID)
+            .query(`
+                SELECT COUNT(*) as unreadCount
+                FROM Notifications
+                WHERE UserID = @UserID AND IsRead = 0
+            `);
+
+        res.json({
+            success: true,
+            data: {
+                unreadCount: result.recordset[0].unreadCount || 0
+            }
+        });
+    } catch (error) {
+        console.error('Error getting unread count:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error getting unread count'
         });
     }
 });

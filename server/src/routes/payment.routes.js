@@ -48,7 +48,7 @@ router.post('/', protect, async (req, res) => {
         await transaction.begin();
 
         try {
-            // Create payment record
+            // Create payment record with pending status
             const paymentResult = await transaction.request()
                 .input('UserID', req.user.id)
                 .input('PlanID', planId)
@@ -81,7 +81,7 @@ router.post('/', protect, async (req, res) => {
             const endDate = new Date();
             endDate.setDate(endDate.getDate() + plan.Duration);
 
-            // Create membership record (pending)
+            // Create membership record with pending status (waiting for admin approval)
             const membershipResult = await transaction.request()
                 .input('UserID', req.user.id)
                 .input('PlanID', planId)
@@ -104,16 +104,64 @@ router.post('/', protect, async (req, res) => {
                     OUTPUT INSERTED.*;
                 `);
 
+            // Create notification for user
+            await transaction.request()
+                .input('UserID', req.user.id)
+                .input('Title', 'Đơn hàng đang chờ xác nhận')
+                .input('Message', `Đơn hàng gói ${plan.Name} đã được tạo và đang chờ admin xác nhận thanh toán. Chúng tôi sẽ thông báo khi đơn hàng được duyệt.`)
+                .input('Type', 'payment')
+                .query(`
+                    INSERT INTO Notifications (UserID, Title, Message, Type)
+                    VALUES (@UserID, @Title, @Message, @Type)
+                `);
+
+            // Get user info for admin notification
+            const userResult = await transaction.request()
+                .input('UserID', req.user.id)
+                .query(`
+                    SELECT FirstName, LastName, Email FROM Users WHERE UserID = @UserID
+                `);
+
+            const user = userResult.recordset[0];
+
             await transaction.commit();
+
+            // Notify all admins about new payment (outside transaction)
+            try {
+                // Get all admin users
+                const adminResult = await pool.request().query(`
+                    SELECT UserID FROM Users WHERE Role = 'admin'
+                `);
+
+                // Create notifications for all admins
+                for (const admin of adminResult.recordset) {
+                    await pool.request()
+                        .input('UserID', admin.UserID)
+                        .input('Title', '💳 Thanh toán mới cần xác nhận')
+                        .input('Message', `${user.FirstName} ${user.LastName} (${user.Email}) đã tạo đơn hàng mới cho gói ${plan.Name} với số tiền ${new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(plan.Price)}. Vui lòng kiểm tra và xác nhận thanh toán.`)
+                        .input('Type', 'payment_new')
+                        .input('RelatedID', payment.PaymentID)
+                        .query(`
+                            INSERT INTO Notifications (UserID, Title, Message, Type, RelatedID)
+                            VALUES (@UserID, @Title, @Message, @Type, @RelatedID)
+                        `);
+                }
+
+                console.log(`📢 Notified ${adminResult.recordset.length} admins about new payment from ${user.FirstName} ${user.LastName}`);
+            } catch (notificationError) {
+                console.error('Error notifying admins about new payment:', notificationError);
+                // Don't fail the main operation if notification fails
+            }
 
             // Return success
             res.status(201).json({
                 success: true,
                 data: {
                     payment: payment,
-                    membership: membershipResult.recordset[0]
+                    membership: membershipResult.recordset[0],
+                    plan: plan
                 },
-                message: 'Payment created successfully'
+                message: 'Đơn hàng đã được tạo và đang chờ admin xác nhận thanh toán'
             });
 
         } catch (error) {
@@ -134,28 +182,37 @@ router.post('/', protect, async (req, res) => {
 router.get('/history', protect, async (req, res) => {
     try {
         const result = await pool.request()
-            .input('UserID', req.user.UserID)
+            .input('UserID', req.user.UserID || req.user.id)
             .query(`
-        SELECT 
-          p.*,
-          mp.Name as PlanName,
-          mp.Description as PlanDescription
-        FROM Payments p
-        LEFT JOIN UserMemberships um ON p.UserID = um.UserID
-        LEFT JOIN MembershipPlans mp ON um.PlanID = mp.PlanID
-        WHERE p.UserID = @UserID
-        ORDER BY p.PaymentDate DESC
-      `);
+                SELECT 
+                    p.*,
+                    mp.Name as PlanName,
+                    mp.Description as PlanDescription,
+                    mp.Duration,
+                    mp.Features,
+                    um.Status as MembershipStatus,
+                    um.StartDate as MembershipStartDate,
+                    um.EndDate as MembershipEndDate,
+                    pc.ConfirmationDate,
+                    pc.ConfirmationCode,
+                    pc.Notes as ConfirmationNotes
+                FROM Payments p
+                JOIN MembershipPlans mp ON p.PlanID = mp.PlanID
+                LEFT JOIN UserMemberships um ON p.UserID = um.UserID AND p.PlanID = um.PlanID
+                LEFT JOIN PaymentConfirmations pc ON p.PaymentID = pc.PaymentID
+                WHERE p.UserID = @UserID
+                ORDER BY p.PaymentDate DESC
+            `);
 
         res.json({
             success: true,
             data: result.recordset
         });
     } catch (error) {
-        console.error(error);
+        console.error('Error getting payment history:', error);
         res.status(500).json({
             success: false,
-            message: 'Error getting payment history'
+            message: 'Lỗi khi lấy lịch sử thanh toán'
         });
     }
 });
@@ -308,87 +365,106 @@ router.post('/process', protect, async (req, res) => {
 
             const plan = planResult.recordset[0];
 
-            // In a real application, process payment through a payment gateway here
-            // This is a mock payment processing
-            const isPaymentSuccessful = true; // Simulating successful payment
-            const transactionId = `txn_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+            // Generate transaction ID
+            const transactionId = `TXN-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 
-            if (!isPaymentSuccessful) {
-                throw new Error('Payment processing failed');
-            }
-
-            // Create payment record
+            // Create payment record with PENDING status (waiting for admin approval)
             const paymentResult = await transaction.request()
-                .input('UserID', req.user.UserID)
+                .input('UserID', req.user.UserID || req.user.id)
+                .input('PlanID', planId)
                 .input('Amount', plan.Price)
-                .input('PaymentMethod', 'credit_card')
+                .input('PaymentMethod', 'BankTransfer') // Use allowed payment method
                 .input('TransactionID', transactionId)
+                .input('Status', 'pending') // PENDING - waiting for admin approval
                 .query(`
-                    INSERT INTO Payments (UserID, Amount, PaymentMethod, Status, TransactionID)
+                    INSERT INTO Payments (UserID, PlanID, Amount, PaymentMethod, Status, TransactionID)
                     OUTPUT INSERTED.*
-                    VALUES (@UserID, @Amount, @PaymentMethod, 'completed', @TransactionID)
+                    VALUES (@UserID, @PlanID, @Amount, @PaymentMethod, @Status, @TransactionID)
                 `);
 
-            // Create or update membership
+            // Calculate membership dates
             const startDate = new Date();
-            const endDate = new Date(Date.now() + plan.Duration * 24 * 60 * 60 * 1000);
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + plan.Duration);
 
+            // Create membership record with PENDING status (waiting for payment confirmation)
             const membershipResult = await transaction.request()
-                .input('UserID', req.user.UserID)
+                .input('UserID', req.user.UserID || req.user.id)
                 .input('PlanID', planId)
                 .input('StartDate', startDate)
                 .input('EndDate', endDate)
+                .input('Status', 'pending') // PENDING - waiting for payment confirmation
                 .query(`
                     MERGE INTO UserMemberships AS target
                     USING (SELECT @UserID AS UserID) AS source
-                    ON target.UserID = source.UserID AND target.Status = 'active'
+                    ON target.UserID = source.UserID
                     WHEN MATCHED THEN
                         UPDATE SET
                             PlanID = @PlanID,
                             StartDate = @StartDate,
                             EndDate = @EndDate,
-                            Status = 'active'
+                            Status = 'pending'
                     WHEN NOT MATCHED THEN
                         INSERT (UserID, PlanID, StartDate, EndDate, Status)
-                        VALUES (@UserID, @PlanID, @StartDate, @EndDate, 'active')
+                        VALUES (@UserID, @PlanID, @StartDate, @EndDate, 'pending')
                     OUTPUT INSERTED.*;
                 `);
 
-            // Create notification
+            // Create notification for user about pending payment
             await transaction.request()
-                .input('UserID', req.user.UserID)
-                .input('Title', 'Payment Successful')
-                .input('Message', `Your payment of ${plan.Price} for ${plan.Name} plan has been processed successfully.`)
+                .input('UserID', req.user.UserID || req.user.id)
+                .input('Title', 'Đơn hàng đang chờ xác nhận')
+                .input('Message', `Đơn hàng gói ${plan.Name} của bạn đã được tạo thành công và đang chờ admin xác nhận thanh toán. Chúng tôi sẽ thông báo khi đơn hàng được duyệt.`)
                 .input('Type', 'payment')
                 .query(`
                     INSERT INTO Notifications (UserID, Title, Message, Type)
                     VALUES (@UserID, @Title, @Message, @Type)
                 `);
 
-            // Update user role to member if they're currently a guest
-            if (req.user.Role === 'guest') {
-                await updateUserRole(req.user.UserID, 'member');
+            // Get user info for admin notification
+            const userResult = await transaction.request()
+                .input('UserID', req.user.UserID || req.user.id)
+                .query(`
+                    SELECT FirstName, LastName, Email FROM Users WHERE UserID = @UserID
+                `);
 
-                // Add notification about the role change
-                await transaction.request()
-                    .input('UserID', req.user.UserID)
-                    .input('Title', 'Account Upgraded')
-                    .input('Message', 'Congratulations! Your account has been upgraded to Member status. You now have access to all premium features.')
-                    .input('Type', 'account')
-                    .query(`
-                        INSERT INTO Notifications (UserID, Title, Message, Type)
-                        VALUES (@UserID, @Title, @Message, @Type)
-                    `);
-            }
+            const user = userResult.recordset[0];
 
             await transaction.commit();
+
+            // Notify all admins about new payment (outside transaction)
+            try {
+                // Get all admin users
+                const adminResult = await pool.request().query(`
+                    SELECT UserID FROM Users WHERE Role = 'admin'
+                `);
+
+                // Create notifications for all admins
+                for (const admin of adminResult.recordset) {
+                    await pool.request()
+                        .input('UserID', admin.UserID)
+                        .input('Title', '💳 Thanh toán mới cần xác nhận')
+                        .input('Message', `${user.FirstName} ${user.LastName} (${user.Email}) đã tạo đơn hàng mới cho gói ${plan.Name} với số tiền ${new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(plan.Price)}. Vui lòng kiểm tra và xác nhận thanh toán.`)
+                        .input('Type', 'payment_new')
+                        .input('RelatedID', paymentResult.recordset[0].PaymentID)
+                        .query(`
+                            INSERT INTO Notifications (UserID, Title, Message, Type, RelatedID)
+                            VALUES (@UserID, @Title, @Message, @Type, @RelatedID)
+                        `);
+                }
+
+                console.log(`📢 Notified ${adminResult.recordset.length} admins about new payment from ${user.FirstName} ${user.LastName}`);
+            } catch (notificationError) {
+                console.error('Error notifying admins about new payment:', notificationError);
+                // Don't fail the main operation if notification fails
+            }
 
             // Mask card number for response
             const maskedCardNumber = cardNumber.replace(/\d(?=\d{4})/g, "*");
 
             res.status(200).json({
                 success: true,
-                message: 'Payment processed successfully',
+                message: 'Đơn hàng đã được tạo thành công và đang chờ admin xác nhận thanh toán',
                 data: {
                     payment: {
                         ...paymentResult.recordset[0],
@@ -399,7 +475,8 @@ router.post('/process', protect, async (req, res) => {
                         }
                     },
                     membership: membershipResult.recordset[0],
-                    membershipEndDate: endDate
+                    plan: plan,
+                    status: 'pending_approval'
                 }
             });
         } catch (error) {
@@ -445,88 +522,33 @@ router.get('/methods', protect, async (req, res) => {
     });
 });
 
-// Add or modify existing payment confirmation route
-router.post('/confirm/:paymentId', protect, async (req, res) => {
+// Get user's pending payments
+router.get('/pending', protect, async (req, res) => {
     try {
-        const { paymentId } = req.params;
-        const { confirmationCode, notes } = req.body;
+        const result = await pool.request()
+            .input('UserID', req.user.UserID || req.user.id)
+            .query(`
+                SELECT 
+                    p.*,
+                    mp.Name as PlanName,
+                    mp.Description as PlanDescription,
+                    mp.Duration,
+                    mp.Features
+                FROM Payments p
+                JOIN MembershipPlans mp ON p.PlanID = mp.PlanID
+                WHERE p.UserID = @UserID AND p.Status = 'pending'
+                ORDER BY p.PaymentDate DESC
+            `);
 
-        // Start transaction
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-
-        try {
-            // 1. Update payment status to confirmed
-            const paymentResult = await transaction.request()
-                .input('PaymentID', sql.Int, paymentId)
-                .input('Status', sql.NVarChar, 'confirmed')
-                .query(`
-                    UPDATE Payments
-                    SET Status = @Status
-                    OUTPUT INSERTED.*
-                    WHERE PaymentID = @PaymentID AND Status = 'pending'
-                `);
-
-            if (paymentResult.recordset.length === 0) {
-                await transaction.rollback();
-                return res.status(404).json({
-                    success: false,
-                    message: 'Payment not found or already confirmed'
-                });
-            }
-
-            const payment = paymentResult.recordset[0];
-
-            // 2. Create confirmation record
-            const confirmationResult = await transaction.request()
-                .input('PaymentID', sql.Int, paymentId)
-                .input('ConfirmedByUserID', sql.Int, req.user.id)
-                .input('ConfirmationCode', sql.NVarChar, confirmationCode || `AUTO-${Date.now()}`)
-                .input('Notes', sql.NVarChar, notes || 'Payment confirmed')
-                .query(`
-                    INSERT INTO PaymentConfirmations (PaymentID, ConfirmedByUserID, ConfirmationCode, Notes)
-                    OUTPUT INSERTED.*
-                    VALUES (@PaymentID, @ConfirmedByUserID, @ConfirmationCode, @Notes)
-                `);
-
-            // 3. Update user membership status
-            await transaction.request()
-                .input('UserID', sql.Int, payment.UserID)
-                .input('Status', sql.NVarChar, 'active')
-                .query(`
-                    UPDATE UserMemberships
-                    SET Status = @Status
-                    WHERE UserID = @UserID AND Status = 'pending'
-                `);
-
-            // 4. Update user role if needed
-            await transaction.request()
-                .input('UserID', sql.Int, payment.UserID)
-                .query(`
-                    UPDATE Users
-                    SET Role = 'member'
-                    WHERE UserID = @UserID AND Role = 'guest'
-                `);
-
-            await transaction.commit();
-
-            res.json({
-                success: true,
-                message: 'Payment confirmed successfully',
-                data: {
-                    payment: payment,
-                    confirmation: confirmationResult.recordset[0]
-                }
-            });
-        } catch (error) {
-            await transaction.rollback();
-            throw error;
-        }
+        res.json({
+            success: true,
+            data: result.recordset
+        });
     } catch (error) {
-        console.error('Error confirming payment:', error);
+        console.error('Error getting pending payments:', error);
         res.status(500).json({
             success: false,
-            message: 'Error processing payment confirmation'
+            message: 'Lỗi khi lấy danh sách thanh toán chờ xác nhận'
         });
     }
 });

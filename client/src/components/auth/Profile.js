@@ -349,7 +349,7 @@ const Profile = () => {
                                         achievement={{
                                             Name: "Ngày đầu tiên",
                                             Description: "Chúc mừng bạn đã hoàn thành ngày đầu tiên không hút thuốc!",
-                                            IconURL: "/images/achievements/trophy-bronze.png"
+                                            IconURL: "/api/images/achievements/trophy-bronze.png"
                                         }}
                                         earnedAt={new Date().toISOString()}
                                     />

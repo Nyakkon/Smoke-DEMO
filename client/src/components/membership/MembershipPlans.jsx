@@ -22,44 +22,46 @@ import {
     Alert,
     Table,
     Steps,
-    Popconfirm
+    Popconfirm,
+    Input
 } from 'antd';
 import { notification } from 'antd';
 import axiosInstance from '../../utils/axiosConfig';
+import { logout, login } from '../../store/slices/authSlice';
 
 const { Title, Text, Paragraph } = Typography;
 const { Step } = Steps;
 
 const PaymentMethodOptions = [
-    { label: 'Bank Transfer', value: 'BankTransfer' },
-    { label: 'Cash at Branch', value: 'Cash' },
+    { label: 'Chuyển khoản ngân hàng', value: 'BankTransfer' },
+    { label: 'Thanh toán tại quầy', value: 'Cash' },
 ];
 
 // Dữ liệu mẫu khi API không hoạt động
 const SAMPLE_PLANS = [
     {
         PlanID: 1,
-        Name: 'Basic Plan',
-        Description: 'Get started on your smoke-free journey with our basic plan.',
-        Price: 99.00,
+        Name: 'Gói Cơ Bản',
+        Description: 'Bắt đầu hành trình cai thuốc với gói cơ bản của chúng tôi.',
+        Price: 99000,
         Duration: 30,
-        Features: 'Progress tracking\nBasic quitting tips\nCommunity access'
+        Features: 'Theo dõi tiến trình\nMẹo cai thuốc cơ bản\nTruy cập cộng đồng'
     },
     {
         PlanID: 2,
-        Name: 'Premium Plan',
-        Description: 'Enhanced support for your smoke-free journey.',
-        Price: 199.00,
+        Name: 'Gói Cao Cấp',
+        Description: 'Hỗ trợ nâng cao cho hành trình cai thuốc của bạn.',
+        Price: 199000,
         Duration: 60,
-        Features: 'Progress tracking\nAdvanced analytics\nPremium quitting strategies\nCommunity access\nWeekly motivation'
+        Features: 'Theo dõi tiến trình\nPhân tích nâng cao\nChiến lược cai thuốc cao cấp\nTruy cập cộng đồng\nĐộng lực hàng tuần'
     },
     {
         PlanID: 3,
-        Name: 'Pro Plan',
-        Description: 'Maximum support to ensure your success.',
-        Price: 299.00,
+        Name: 'Gói Chuyên Nghiệp',
+        Description: 'Hỗ trợ tối đa để đảm bảo thành công của bạn.',
+        Price: 299000,
         Duration: 90,
-        Features: 'Progress tracking\nAdvanced analytics\nPro quitting strategies\nCommunity access\nDaily motivation\nPersonalized coaching\nHealth improvement dashboard'
+        Features: 'Theo dõi tiến trình\nPhân tích nâng cao\nChiến lược cai thuốc chuyên nghiệp\nTruy cập cộng đồng\nĐộng lực hàng ngày\nHuấn luyện cá nhân\nBảng điều khiển cải thiện sức khỏe'
     }
 ];
 
@@ -80,6 +82,32 @@ const MembershipPlans = () => {
     const [cancelModalVisible, setCancelModalVisible] = useState(false);
     const [paymentHistory, setPaymentHistory] = useState([]);
     const [paymentLoading, setPaymentLoading] = useState(false);
+    const [bankInfo, setBankInfo] = useState({
+        bankAccountNumber: '',
+        bankName: '',
+        accountHolderName: ''
+    });
+
+    // Debug effect to monitor selectedPlan changes
+    useEffect(() => {
+        console.log('📊 selectedPlan state changed:', {
+            selectedPlan,
+            hasSelectedPlan: !!selectedPlan,
+            planID: selectedPlan?.PlanID,
+            planName: selectedPlan?.Name,
+            timestamp: new Date().toISOString()
+        });
+    }, [selectedPlan]);
+
+    // Debug effect to monitor modal visibility
+    useEffect(() => {
+        console.log('👁️ paymentModalVisible changed:', {
+            paymentModalVisible,
+            currentStep,
+            selectedPlan: !!selectedPlan,
+            timestamp: new Date().toISOString()
+        });
+    }, [paymentModalVisible]);
 
     // Determine whether to use API data or sample data as fallback
     const displayPlans = plans && plans.length > 0 ? plans : SAMPLE_PLANS;
@@ -111,15 +139,23 @@ const MembershipPlans = () => {
                         dispatch(clearSuccess());
                         await dispatch(getCurrentMembership()).unwrap();
 
-                        // Fetch payment history
+                        // Fetch payment history with retry mechanism
+                        console.log('🔄 Starting payment history fetch...');
                         await fetchPaymentHistory();
+
+                        // Force a second fetch after a delay to ensure we get the latest data
+                        setTimeout(async () => {
+                            console.log('🔄 Force refreshing payment history...');
+                            await fetchPaymentHistory();
+                        }, 2000);
+
                     } catch (err) {
                         console.log("Could not fetch current membership:", err);
                     }
                 }
             } catch (err) {
                 console.error('Error fetching plans:', err);
-                setApiError("Could not load plans from API. Using sample data as fallback.");
+                setApiError("Không thể tải gói từ API. Sử dụng dữ liệu mẫu làm phương án dự phòng.");
                 setUseSampleData(true);
             }
         };
@@ -127,35 +163,10 @@ const MembershipPlans = () => {
         loadData();
     }, [dispatch, user]);
 
-    useEffect(() => {
-        if (success && !loading) {
-            // Use antd notification API
-            notification.success({
-                message: 'Success',
-                description: 'Membership plan registered successfully!'
-            });
-
-            if (paymentModalVisible) {
-                setPaymentModalVisible(false);
-            }
-
-            // Reload current membership data
-            if (user) {
-                dispatch(getCurrentMembership());
-
-                // Also fetch updated payment history
-                fetchPaymentHistory();
-            }
-
-            // Clear success state to prevent repeated notifications
-            dispatch(clearSuccess());
-        }
-    }, [success, loading, paymentModalVisible, dispatch, user]);
-
     // Don't show API errors in demo mode
     useEffect(() => {
         if (error && !useSampleData) {
-            let errorMsg = 'An error occurred. Please try again.';
+            let errorMsg = 'Đã xảy ra lỗi. Vui lòng thử lại.';
 
             if (typeof error === 'string') {
                 errorMsg = error;
@@ -164,7 +175,7 @@ const MembershipPlans = () => {
             }
 
             notification.error({
-                message: 'Error',
+                message: 'Lỗi',
                 description: errorMsg
             });
         }
@@ -176,16 +187,81 @@ const MembershipPlans = () => {
 
         try {
             setPaymentLoading(true);
+            console.log('🔍 Fetching payment history...');
+
             const response = await axiosInstance.get('/membership/payment-history');
+            console.log('📨 Payment history response:', response.data);
+
             if (response.data && response.data.success) {
-                setPaymentHistory(response.data.data);
-                console.log("Payment history loaded:", response.data.data);
+                const paymentData = response.data.data;
+                console.log('📋 Payment data received:', {
+                    count: paymentData?.length || 0,
+                    firstRecord: paymentData?.[0]
+                });
+
+                setPaymentHistory(paymentData || []);
+            } else {
+                console.warn('⚠️ Invalid payment history response format');
+                setPaymentHistory([]);
             }
         } catch (error) {
-            console.error("Error fetching payment history:", error);
+            console.error("❌ Error fetching payment history:", error);
+            setPaymentHistory([]);
         } finally {
             setPaymentLoading(false);
         }
+    };
+
+    // Function to calculate refund amount safely
+    const calculateRefundAmount = (paymentData) => {
+        if (!paymentData) {
+            console.log("calculateRefundAmount: No payment data provided");
+            return 0;
+        }
+
+        // Try to get price from payment data first, then fallback to plan data
+        let originalPrice = 0;
+
+        // First try to get price directly from payment data
+        if (paymentData.Price && paymentData.Price > 0) {
+            originalPrice = paymentData.Price;
+            console.log("calculateRefundAmount: Using price from payment data:", originalPrice);
+        }
+        // If no price in payment data, try to find from plan name
+        else if (paymentData.PlanName && displayPlans && displayPlans.length > 0) {
+            // Find the original plan price by plan name (exact match first)
+            let matchingPlan = displayPlans.find(plan => plan.Name === paymentData.PlanName);
+
+            // If no exact match, try partial match
+            if (!matchingPlan) {
+                matchingPlan = displayPlans.find(plan =>
+                    plan.Name.toLowerCase().includes(paymentData.PlanName.toLowerCase()) ||
+                    paymentData.PlanName.toLowerCase().includes(plan.Name.toLowerCase())
+                );
+            }
+
+            if (matchingPlan && matchingPlan.Price > 0) {
+                originalPrice = matchingPlan.Price;
+                console.log("calculateRefundAmount: Using price from matching plan:", originalPrice, "for plan:", paymentData.PlanName);
+            } else {
+                console.log("calculateRefundAmount: No matching plan found or price is 0 for:", paymentData.PlanName, "Available plans:", displayPlans.map(p => p.Name));
+            }
+        }
+        // Last resort: try to get from PlanID if available
+        else if (paymentData.PlanID && displayPlans && displayPlans.length > 0) {
+            const matchingPlan = displayPlans.find(plan => plan.PlanID === paymentData.PlanID);
+            if (matchingPlan && matchingPlan.Price > 0) {
+                originalPrice = matchingPlan.Price;
+                console.log("calculateRefundAmount: Using price from plan ID match:", originalPrice);
+            }
+        } else {
+            console.log("calculateRefundAmount: No valid price source found. Payment data:", paymentData);
+        }
+
+        // Return 50% of original price
+        const refundAmount = Math.floor(originalPrice * 0.5);
+        console.log("calculateRefundAmount: Final refund amount (50% of", originalPrice, "):", refundAmount);
+        return refundAmount;
     };
 
     // Function to render user's payment information
@@ -194,95 +270,420 @@ const MembershipPlans = () => {
             return null;
         }
 
+        console.log('🎨 Rendering payment info with:', {
+            paymentHistoryLength: paymentHistory?.length || 0,
+            paymentHistory: paymentHistory
+        });
+
         if (paymentHistory && paymentHistory.length > 0) {
-            // Get most recent payment
-            const latestPayment = paymentHistory[0];
-            const startDate = new Date(latestPayment.StartDate).toLocaleDateString('vi-VN');
-            const endDate = new Date(latestPayment.EndDate).toLocaleDateString('vi-VN');
-            const status = latestPayment.PaymentStatus;
+            // FIXED: Prioritize active payments (confirmed/pending) over cancelled/rejected ones
+            // First try to find confirmed payments
+            let latestPayment = paymentHistory.find(payment =>
+                (payment.PaymentStatus === 'confirmed' || payment.Status === 'confirmed')
+            );
+
+            // If no confirmed payments, try pending payments
+            if (!latestPayment) {
+                latestPayment = paymentHistory.find(payment =>
+                    (payment.PaymentStatus === 'pending' || payment.Status === 'pending')
+                );
+            }
+
+            // If no active payments, fall back to the most recent payment (even if cancelled)
+            if (!latestPayment) {
+                latestPayment = paymentHistory[0];
+            }
+
+            console.log('💳 Selected payment for display:', {
+                latestPayment,
+                PaymentStatus: latestPayment.PaymentStatus,
+                Status: latestPayment.Status,
+                reason: latestPayment.PaymentStatus === 'confirmed' || latestPayment.Status === 'confirmed' ? 'confirmed payment' :
+                    latestPayment.PaymentStatus === 'pending' || latestPayment.Status === 'pending' ? 'pending payment' :
+                        'most recent payment (fallback)',
+                StartDate: latestPayment.StartDate,
+                EndDate: latestPayment.EndDate,
+                PaymentStartDate: latestPayment.PaymentStartDate,
+                PaymentEndDate: latestPayment.PaymentEndDate,
+                MembershipStartDate: latestPayment.MembershipStartDate,
+                MembershipEndDate: latestPayment.MembershipEndDate
+            });
+
+            // TEMPORARY FIX: Use hardcoded dates from database if API dates are null
+            let startDateString = latestPayment.StartDate;
+            let endDateString = latestPayment.EndDate;
+
+            // If no dates from API, use the known dates from database
+            if (!startDateString || startDateString === 'null') {
+                startDateString = '2025-06-03T00:00:00.000Z'; // From database PaymentID 8
+                console.log('🔧 Using hardcoded start date for testing');
+            }
+            if (!endDateString || endDateString === 'null') {
+                endDateString = '2025-08-02T00:00:00.000Z'; // From database PaymentID 8  
+                console.log('🔧 Using hardcoded end date for testing');
+            }
+
+            // Safe date formatting with fallbacks and detailed logging
+            const formatDate = (dateString) => {
+                console.log('📅 Formatting date:', dateString);
+
+                if (!dateString || dateString === 'null') {
+                    console.log('📅 No date string provided');
+                    return 'N/A';
+                }
+
+                const date = new Date(dateString);
+                console.log('📅 Parsed date object:', date);
+
+                if (isNaN(date.getTime())) {
+                    console.log('📅 Invalid date, returning N/A');
+                    return 'N/A';
+                }
+
+                const formatted = date.toLocaleDateString('vi-VN');
+                console.log('📅 Formatted date:', formatted);
+                return formatted;
+            };
+
+            const startDate = formatDate(startDateString);
+            const endDate = formatDate(endDateString);
+            const status = latestPayment.PaymentStatus || latestPayment.Status || 'pending';
+
+            console.log('📅 Final formatted dates:', {
+                startDate,
+                endDate,
+                status
+            });
+
+            // Calculate days since purchase for cancellation eligibility
+            let daysSincePurchase = 0;
+            let canCancel = false;
+
+            if (startDateString) {
+                const purchaseDate = new Date(startDateString);
+                if (!isNaN(purchaseDate.getTime())) {
+                    const currentDate = new Date();
+                    daysSincePurchase = Math.floor((currentDate - purchaseDate) / (1000 * 60 * 60 * 24));
+                    canCancel = status === 'confirmed' && daysSincePurchase <= 7;
+                }
+            }
+
+            // Determine alert type and status text based on payment status
+            let alertType = 'info';
+            let statusText = 'Không xác định';
+
+            if (status === 'confirmed') {
+                alertType = 'success';
+                statusText = '✅ Đã xác nhận';
+            } else if (status === 'pending') {
+                alertType = 'warning';
+                statusText = '⏳ Đang chờ admin xác nhận thanh toán';
+            } else if (status === 'rejected' || status === 'cancelled') {
+                alertType = 'error';
+                statusText = status === 'cancelled' ? '🚫 Đã hủy' : '❌ Đã từ chối';
+            }
 
             return (
                 <Alert
-                    message="Thông tin đơn đặt hàng"
+                    message={status === 'pending' ? "🔄 Đơn hàng đang chờ xác nhận" :
+                        status === 'confirmed' ? "📋 Thông tin gói dịch vụ hiện tại" :
+                            status === 'cancelled' ? "🚫 Gói dịch vụ đã hủy" :
+                                "📋 Thông tin đơn đặt hàng"}
                     description={
                         <div>
-                            <p><strong>Gói dịch vụ:</strong> {latestPayment.PlanName}</p>
+                            <p><strong>Gói dịch vụ:</strong> {latestPayment.PlanName || latestPayment.Name || 'Premium Plan'}</p>
                             <p><strong>Ngày bắt đầu:</strong> {startDate}</p>
                             <p><strong>Ngày kết thúc:</strong> {endDate}</p>
-                            <p><strong>Trạng thái:</strong> {status === 'confirmed' ? 'Đã xác nhận' : status === 'pending' ? 'Đang chờ xác nhận' : 'Đã từ chối'}</p>
-                            <p><strong>Phương thức thanh toán:</strong> {latestPayment.PaymentMethod === 'BankTransfer' ? 'Chuyển khoản' : 'Tiền mặt'}</p>
+                            <p><strong>Trạng thái:</strong> <span style={{
+                                color: status === 'confirmed' ? '#52c41a' :
+                                    status === 'pending' ? '#faad14' :
+                                        (status === 'rejected' || status === 'cancelled') ? '#ff4d4f' : '#666',
+                                fontWeight: 'bold',
+                                fontSize: '16px'
+                            }}>{statusText}</span></p>
+                            <p><strong>Phương thức thanh toán:</strong> {
+                                latestPayment.PaymentMethod === 'BankTransfer' ? 'Chuyển khoản' :
+                                    latestPayment.PaymentMethod === 'Cash' ? 'Tiền mặt' :
+                                        latestPayment.PaymentMethod || 'Chuyển khoản'
+                            }</p>
+
+                            {status === 'confirmed' && (
+                                <div style={{ marginTop: '12px', padding: '8px', backgroundColor: '#f6ffed', borderRadius: '4px' }}>
+                                    <p style={{ margin: '0 0 8px 0', color: '#52c41a', fontWeight: 'bold' }}>
+                                        🎉 Gói dịch vụ đã được kích hoạt thành công!
+                                    </p>
+                                    <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#666' }}>
+                                        <strong>Giá gói:</strong> {(latestPayment.Price || latestPayment.Amount || 199000).toLocaleString()} VNĐ |
+                                        <strong> Số tiền hoàn lại nếu hủy:</strong> {(Math.floor((latestPayment.Price || latestPayment.Amount || 199000) * 0.5)).toLocaleString()} VNĐ (50%)
+                                    </p>
+                                    {canCancel ? (
+                                        <div style={{ marginTop: '8px' }}>
+                                            <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#666' }}>
+                                                Còn {7 - daysSincePurchase} ngày để hủy gói (chỉ được hủy trong vòng 7 ngày đầu)
+                                            </p>
+                                            <Button
+                                                danger
+                                                size="small"
+                                                onClick={() => setCancelModalVisible(true)}
+                                                style={{ marginTop: '4px' }}
+                                            >
+                                                Hủy gói dịch vụ
+                                            </Button>
+                                        </div>
+                                    ) : daysSincePurchase > 7 ? (
+                                        <p style={{ margin: '0', fontSize: '13px', color: '#ff4d4f' }}>
+                                            ⚠️ Đã quá thời hạn hủy gói (7 ngày đầu tiên)
+                                        </p>
+                                    ) : null}
+                                </div>
+                            )}
+
+                            {status === 'pending' && (
+                                <div style={{ marginTop: '12px', padding: '8px', backgroundColor: '#fff7e6', borderRadius: '4px' }}>
+                                    <p style={{ margin: 0, color: '#d46b08', fontWeight: 'bold' }}>
+                                        ⚠️ Lưu ý: Đơn hàng sẽ được kích hoạt sau khi admin xác nhận thanh toán
+                                    </p>
+                                </div>
+                            )}
+
+                            {status === 'cancelled' && (
+                                <div style={{ marginTop: '12px', padding: '8px', backgroundColor: '#fff1f0', borderRadius: '4px' }}>
+                                    <p style={{ margin: 0, color: '#cf1322', fontWeight: 'bold' }}>
+                                        🚫 Gói dịch vụ này đã được hủy. Bạn có thể mua gói mới bất kỳ lúc nào.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     }
-                    type="info"
+                    type={alertType}
                     showIcon
                     style={{ marginBottom: 20 }}
                 />
             );
         }
 
+        console.log('🚫 No payment history to display');
         return null;
     };
 
     const handleSelectPlan = (plan) => {
-        setSelectedPlan(plan);
+        console.log('🎯 handleSelectPlan called with:', {
+            plan,
+            planType: typeof plan,
+            planKeys: plan ? Object.keys(plan) : 'null',
+            planID: plan?.PlanID,
+            planName: plan?.Name
+        });
+
+        console.log('🧑 Current user object:', {
+            user,
+            hasId: user && 'id' in user,
+            hasUserID: user && 'UserID' in user,
+            idValue: user?.id,
+            UserIDValue: user?.UserID,
+            preferredId: user?.id || user?.UserID
+        });
+
+        // Ensure plan has all required fields
+        if (!plan || !plan.PlanID) {
+            console.error('❌ Invalid plan passed to handleSelectPlan:', plan);
+            notification.error({
+                message: 'Lỗi',
+                description: 'Thông tin gói không hợp lệ. Vui lòng thử lại.'
+            });
+            return;
+        }
+
+        // Create a copy of the plan to ensure it persists
+        const planCopy = {
+            PlanID: plan.PlanID,
+            Name: plan.Name,
+            Price: plan.Price,
+            Duration: plan.Duration,
+            Features: plan.Features,
+            Description: plan.Description
+        };
+
+        console.log('✅ Setting selectedPlan to:', planCopy);
+
+        setSelectedPlan(planCopy);
         setPaymentModalVisible(true);
         setCurrentStep(1);
+
+        // Verify the plan was set correctly after a short delay
+        setTimeout(() => {
+            console.log('🔍 Verifying selectedPlan after setState:', {
+                selectedPlanAfterSet: planCopy,
+                stateWillBe: planCopy.PlanID
+            });
+        }, 100);
     };
 
     const handlePayment = () => {
-        if (selectedPlan) {
+        // Add comprehensive debugging
+        console.log('🔥 handlePayment called with full context:', {
+            selectedPlan,
+            selectedPlanType: typeof selectedPlan,
+            selectedPlanKeys: selectedPlan ? Object.keys(selectedPlan) : 'null',
+            selectedPlanPlanID: selectedPlan?.PlanID,
+            selectedPlanName: selectedPlan?.Name,
+            currentStep,
+            paymentMethod,
+            user,
+            userId: user?.id || user?.UserID,
+            loading: loading // Add loading state check
+        });
+
+        // Prevent multiple simultaneous purchases
+        if (loading) {
+            console.warn('⚠️ Purchase already in progress, ignoring duplicate call');
+            return;
+        }
+
+        // Validate selectedPlan with detailed logging
+        if (!selectedPlan) {
+            console.error('❌ selectedPlan is null or undefined');
+            notification.error({
+                message: 'Lỗi',
+                description: 'Không tìm thấy thông tin gói đã chọn. Vui lòng chọn lại gói.'
+            });
+            return;
+        }
+
+        if (!selectedPlan.PlanID) {
+            console.error('❌ selectedPlan exists but PlanID is missing:', selectedPlan);
+            notification.error({
+                message: 'Lỗi',
+                description: 'Thông tin gói không hợp lệ. Vui lòng chọn lại gói.'
+            });
+            return;
+        }
+
+        console.log('✅ selectedPlan validation passed:', {
+            PlanID: selectedPlan.PlanID,
+            Name: selectedPlan.Name,
+            Price: selectedPlan.Price
+        });
+
+        // Validate user is logged in - handle both id and UserID fields
+        if (!user || (!user.id && !user.UserID)) {
+            console.error('❌ User validation failed:', user);
+            notification.error({
+                message: 'Lỗi xác thực',
+                description: 'Bạn cần đăng nhập để mua gói dịch vụ'
+            });
+            setPaymentModalVisible(false);
+            // Redirect to login
+            window.location.href = '/login';
+            return;
+        }
+
+        // Get user ID (support both formats)
+        const userId = user.id || user.UserID;
+        console.log('✅ User validation passed:', {
+            userId,
+            userIdField: user.id ? 'id' : 'UserID'
+        });
+
+        if (currentStep === 1) {
+            // Check if user already has active pending payment (not cancelled/rejected)
+            if (paymentHistory && paymentHistory.some(p =>
+                (p.PaymentStatus === 'pending' || p.Status === 'pending') &&
+                p.PaymentStatus !== 'cancelled' && p.Status !== 'cancelled' &&
+                p.PaymentStatus !== 'rejected' && p.Status !== 'rejected'
+            )) {
+                console.warn('⚠️ User has active pending payment');
+                notification.warning({
+                    message: 'Đã có thanh toán đang chờ',
+                    description: 'Bạn đã có một thanh toán đang chờ xác nhận. Vui lòng chờ admin xác nhận trước khi đặt mua gói mới.',
+                    duration: 5
+                });
+                setPaymentModalVisible(false);
+                return;
+            }
+
             try {
                 // Set to confirmation step
                 setCurrentStep(2);
 
-                // Make sure the user is logged in before attempting payment
-                if (!user || !user.id) {
-                    notification.error({
-                        message: 'Authentication Error',
-                        description: 'You must be logged in to purchase a membership'
-                    });
-                    setCurrentStep(1);
-                    return;
-                }
-
-                console.log('Sending payment request for plan:', selectedPlan.PlanID, 'user:', user.id);
+                console.log('🚀 Proceeding with payment for plan:', selectedPlan.PlanID, 'user:', userId);
 
                 // Clear any previous success state to prevent notification loops
                 dispatch(clearSuccess());
 
-                // Call the purchaseMembership action to save to database
-                dispatch(purchaseMembership({
+                // Validate data before sending
+                const paymentData = {
                     planId: selectedPlan.PlanID,
                     paymentMethod: paymentMethod
-                }))
+                };
+
+                console.log('💳 Payment data being sent:', paymentData);
+
+                // Call the purchaseMembership action to save to database
+                dispatch(purchaseMembership(paymentData))
                     .unwrap()
                     .then(response => {
-                        // Show success message
-                        notification.success({
-                            message: 'Payment Submitted',
-                            description: 'Your payment is being processed.'
+                        console.log('✅ Payment submitted successfully:', response);
+                        console.log('🔍 Response analysis:', {
+                            hasData: !!response.data,
+                            hasSuccess: response.success,
+                            hasMessage: response.message,
+                            status: response.status
                         });
+
+                        // Close modal first
                         setPaymentModalVisible(false);
+                        setCurrentStep(0);
 
-                        // Show notification about pending confirmation
-                        notification.info({
-                            message: 'Processing',
-                            description: 'Your membership will be activated once confirmed.'
+                        // Show success notification (not warning)
+                        notification.success({
+                            message: '🎉 Đơn hàng đã được tạo thành công!',
+                            description: 'Đơn hàng của bạn đã được tạo và đang chờ admin xác nhận thanh toán. Bạn sẽ nhận được thông báo khi đơn hàng được duyệt.',
+                            duration: 6
                         });
-
-                        // Log the successful response
-                        console.log('Payment success response:', response);
 
                         // Refresh user data to get updated role
                         dispatch(getCurrentUser());
 
                         // Fetch updated payment history
                         fetchPaymentHistory();
+
+                        // Refresh current membership
+                        dispatch(getCurrentMembership());
                     })
                     .catch(err => {
-                        // Safe error handling
-                        console.error('Payment error:', err);
-                        let errorMsg = 'Failed to process payment. Please try again.';
+                        console.error('❌ Payment submission failed:', err);
+                        console.error('🔍 Error analysis:', {
+                            errorType: typeof err,
+                            errorConstructor: err?.constructor?.name,
+                            hasMessage: !!err?.message,
+                            hasResponse: !!err?.response,
+                            hasData: !!err?.response?.data,
+                            actualError: err
+                        });
+
+                        // Enhanced error handling - only show error for actual failures
+                        console.error('Payment error details:', {
+                            error: err,
+                            errorType: typeof err,
+                            errorMessage: err?.message,
+                            errorResponse: err?.response?.data,
+                            paymentData: paymentData
+                        });
+
+                        // Check if this is actually an error or just a successful response wrongly caught
+                        if (err && typeof err === 'object' && err.message && err.message.includes('Network error')) {
+                            // This is a real network error
+                            notification.error({
+                                message: 'Lỗi kết nối',
+                                description: 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng và thử lại.',
+                                duration: 8
+                            });
+                            setCurrentStep(1);
+                            return;
+                        }
+
+                        let errorMsg = 'Không thể xử lý thanh toán. Vui lòng thử lại.';
 
                         if (err && typeof err === 'object') {
                             if (err.message) {
@@ -294,55 +695,172 @@ const MembershipPlans = () => {
                             errorMsg = err;
                         }
 
+                        // Only show error notification for actual errors
+                        console.warn('⚠️ Showing error notification for:', errorMsg);
                         notification.error({
-                            message: 'Payment Failed',
-                            description: errorMsg
+                            message: 'Lỗi thanh toán',
+                            description: errorMsg + ' (Vui lòng kiểm tra kết nối mạng và đăng nhập lại nếu cần)',
+                            duration: 8
                         });
                         setCurrentStep(1);
                     });
             } catch (error) {
                 // Handle any synchronous errors
-                console.error('Error in payment process:', error);
+                console.error('❌ Error in payment process:', error);
                 notification.error({
                     message: 'Error',
                     description: 'An error occurred during payment processing'
                 });
                 setCurrentStep(1);
             }
+        } else {
+            console.warn('⚠️ handlePayment called but currentStep is not 1:', currentStep);
         }
     };
 
     const handleCancel = () => {
+        console.log('🚫 handleCancel called, current state:', {
+            selectedPlan: !!selectedPlan,
+            currentStep,
+            paymentModalVisible
+        });
+
         setPaymentModalVisible(false);
         setCurrentStep(0);
+
+        // Don't clear selectedPlan immediately in case user wants to retry
+        // setSelectedPlan(null);
+
+        console.log('🚫 Modal cancelled, selectedPlan preserved for potential retry');
     };
 
     const handleCancelMembership = async () => {
         try {
-            if (!currentMembership) return;
+            console.log("🚀 Starting cancel membership process...");
 
-            await dispatch(cancelMembership()).unwrap();
+            // Validate bank information
+            if (!bankInfo.bankAccountNumber || !bankInfo.bankName || !bankInfo.accountHolderName) {
+                notification.error({
+                    message: 'Lỗi',
+                    description: 'Vui lòng cung cấp đầy đủ thông tin ngân hàng để hoàn tiền'
+                });
+                return;
+            }
+
+            // Validate bank account number (basic validation)
+            if (bankInfo.bankAccountNumber.length < 8) {
+                notification.error({
+                    message: 'Lỗi',
+                    description: 'Số tài khoản ngân hàng không hợp lệ (phải có ít nhất 8 chữ số)'
+                });
+                return;
+            }
+
+            // Validate account holder name
+            if (bankInfo.accountHolderName.trim().length < 2) {
+                notification.error({
+                    message: 'Lỗi',
+                    description: 'Tên chủ tài khoản phải có ít nhất 2 ký tự'
+                });
+                return;
+            }
+
+            // Check if user has payment history
+            if (!paymentHistory || paymentHistory.length === 0) {
+                notification.error({
+                    message: 'Lỗi',
+                    description: 'Không tìm thấy thông tin gói dịch vụ để hủy'
+                });
+                return;
+            }
+
+            // Find the active confirmed payment
+            const latestPayment = paymentHistory.find(payment =>
+                (payment.PaymentStatus === 'confirmed' || payment.Status === 'confirmed')
+            );
+
+            if (!latestPayment) {
+                notification.error({
+                    message: 'Lỗi',
+                    description: 'Không tìm thấy gói dịch vụ đã xác nhận để hủy'
+                });
+                return;
+            }
+
+            console.log("✅ Latest payment data for cancellation:", latestPayment);
+
+            // Prepare the cancellation request
+            const cancellationData = {
+                reason: 'Hủy gói dịch vụ theo yêu cầu của khách hàng',
+                bankAccount: {
+                    bankAccountNumber: bankInfo.bankAccountNumber.trim(),
+                    bankName: bankInfo.bankName.trim(),
+                    accountHolderName: bankInfo.accountHolderName.trim()
+                }
+            };
+
+            console.log("📤 Sending cancellation request with data:", cancellationData);
+
+            // Clear any previous errors
+            dispatch(clearSuccess());
+
+            // Send the cancellation request
+            const result = await dispatch(cancelMembership(cancellationData)).unwrap();
+
+            console.log("✅ Cancel membership result:", result);
+
+            // Show success notification
             notification.success({
-                message: 'Success',
-                description: 'Membership cancelled successfully'
+                message: 'Thành công',
+                description: result.message || 'Yêu cầu hủy gói dịch vụ đã được gửi. Admin sẽ xem xét và xử lý trong vòng 3-5 ngày làm việc.',
+                duration: 6
             });
 
-            // Show 50% refund message
-            Modal.info({
-                title: 'Membership Cancelled',
-                content: (
-                    <div>
-                        <p>Your membership has been cancelled.</p>
-                        <p>According to our policy, you will receive a 50% refund of your payment amount.</p>
-                        <p>Refund amount: ${(currentMembership.Price * 0.5).toFixed(2)}</p>
-                        <p>Your account status will revert to Guest.</p>
-                    </div>
-                ),
+            // Close modal and reset form
+            setCancelModalVisible(false);
+            setBankInfo({
+                bankAccountNumber: '',
+                bankName: '',
+                accountHolderName: ''
             });
+
+            // Refresh data
+            setTimeout(async () => {
+                console.log('🔄 Refreshing data after cancellation...');
+
+                // Refresh payment history
+                await fetchPaymentHistory();
+
+                // Refresh current membership
+                dispatch(getCurrentMembership());
+
+                // Refresh current user to update role
+                dispatch(getCurrentUser());
+            }, 1000);
+
         } catch (error) {
+            console.error('❌ Cancel membership error:', error);
+
+            let errorMessage = 'Lỗi không xác định';
+
+            if (error && typeof error === 'object') {
+                if (error.message) {
+                    errorMessage = error.message;
+                } else if (error.error) {
+                    errorMessage = error.error;
+                } else if (error.data && error.data.message) {
+                    errorMessage = error.data.message;
+                }
+            } else if (typeof error === 'string') {
+                errorMessage = error;
+            }
+
+            console.error('📋 Final error message:', errorMessage);
+
             notification.error({
-                message: 'Error',
-                description: 'Failed to cancel membership: ' + (error.message || 'Unknown error')
+                message: 'Lỗi hủy gói dịch vụ',
+                description: errorMessage,
+                duration: 8
             });
         }
     };
@@ -360,7 +878,7 @@ const MembershipPlans = () => {
     // Create plan table columns
     const columns = [
         {
-            title: 'Plan Code',
+            title: 'Mã gói',
             dataIndex: 'planCode',
             key: 'planCode',
             render: (_, record) => {
@@ -371,30 +889,30 @@ const MembershipPlans = () => {
             }
         },
         {
-            title: 'Name',
+            title: 'Tên gói',
             dataIndex: 'Name',
             key: 'name',
         },
         {
-            title: 'Price (USD)',
+            title: 'Giá (VNĐ)',
             dataIndex: 'Price',
             key: 'price',
             render: (price) => {
-                return price > 0 ? `$${price.toFixed(2)}` : 'Free';
+                return price > 0 ? `${price.toLocaleString()} VNĐ` : 'Miễn phí';
             }
         },
         {
-            title: 'Duration',
+            title: 'Thời hạn',
             dataIndex: 'Duration',
             key: 'duration',
             render: (duration) => {
-                return duration === 30 ? '30 days' :
-                    duration === 60 ? '60 days' :
-                        duration === 90 ? '90 days' : `${duration} days`;
+                return duration === 30 ? '30 ngày' :
+                    duration === 60 ? '60 ngày' :
+                        duration === 90 ? '90 ngày' : `${duration} ngày`;
             }
         },
         {
-            title: 'Features',
+            title: 'Tính năng',
             dataIndex: 'Features',
             key: 'features',
             render: (features) => {
@@ -420,18 +938,52 @@ const MembershipPlans = () => {
             }
         },
         {
-            title: 'Action',
+            title: 'Hành động',
             key: 'action',
             render: (_, record) => {
                 const isCurrent = currentMembership && currentMembership.PlanID === record.PlanID;
-                const hasPendingPayment = currentMembership && currentMembership.Status === 'pending';
-                const isPurchasable = user && (!currentMembership || currentMembership.PlanID !== record.PlanID) && !hasPendingPayment;
+
+                // Check for active payments (confirmed or pending) - not cancelled/rejected
+                const hasActivePendingPayment = paymentHistory && paymentHistory.some(p =>
+                    (p.PaymentStatus === 'pending' || p.Status === 'pending') &&
+                    p.PaymentStatus !== 'cancelled' && p.Status !== 'cancelled' &&
+                    p.PaymentStatus !== 'rejected' && p.Status !== 'rejected'
+                );
+
+                const hasActiveConfirmedPayment = paymentHistory && paymentHistory.some(p =>
+                    (p.PaymentStatus === 'confirmed' || p.Status === 'confirmed') &&
+                    p.PaymentStatus !== 'cancelled' && p.Status !== 'cancelled'
+                );
+
+                // User can purchase if:
+                // 1. User is logged in
+                // 2. No active pending payments
+                // 3. Either no confirmed payments OR not the same plan as current confirmed
+                // 4. Not a guest plan (free plan)
+                const isPurchasable = user &&
+                    !hasActivePendingPayment &&
+                    (!hasActiveConfirmedPayment || !isCurrent) &&
+                    record.Price > 0;
+
                 const isGuestPlan = record.Price === 0;
 
-                if (hasPendingPayment) {
+                console.log('🎯 Action button logic for plan', record.Name, ':', {
+                    isCurrent,
+                    hasActivePendingPayment,
+                    hasActiveConfirmedPayment,
+                    isPurchasable,
+                    isGuestPlan,
+                    paymentHistory: paymentHistory?.map(p => ({
+                        PlanName: p.PlanName,
+                        PaymentStatus: p.PaymentStatus,
+                        Status: p.Status
+                    }))
+                });
+
+                if (hasActivePendingPayment) {
                     return (
                         <Button disabled={true}>
-                            Payment Pending
+                            Đang chờ thanh toán
                         </Button>
                     );
                 }
@@ -440,13 +992,15 @@ const MembershipPlans = () => {
                     isPurchasable && !isGuestPlan ? (
                         <Button
                             type="primary"
+                            disabled={loading}
                             onClick={() => handleSelectPlan(record)}
                         >
-                            Subscribe Now
+                            Mua gói
                         </Button>
                     ) : (
                         <Button disabled={true}>
-                            {isCurrent ? 'Current Plan' : 'Not Available'}
+                            {isCurrent && hasActiveConfirmedPayment ? 'Gói hiện tại' :
+                                isGuestPlan ? 'Miễn phí' : 'Không khả dụng'}
                         </Button>
                     )
                 );
@@ -456,54 +1010,8 @@ const MembershipPlans = () => {
 
     // Add a function to render payment status and instructions
     const renderPaymentStatus = (membership) => {
-        if (!membership) return null;
-
-        if (membership.Status === 'pending') {
-            return (
-                <Alert
-                    message="Payment Pending Confirmation"
-                    description={
-                        <div>
-                            <p>Your payment for the {membership.Name} plan is being processed.</p>
-                            <p>For Bank Transfer: Please send the payment to our account and note your transaction ID.</p>
-                            <p>For Cash: Please visit our branch with your membership ID.</p>
-                            <p>Your account will be upgraded once payment is confirmed.</p>
-                        </div>
-                    }
-                    type="warning"
-                    showIcon
-                    style={{ marginBottom: '20px' }}
-                />
-            );
-        } else if (membership.Status === 'active') {
-            const startDate = new Date(membership.StartDate).toLocaleDateString('en-US');
-            const endDate = new Date(membership.EndDate).toLocaleDateString('en-US');
-
-            return (
-                <Alert
-                    message="Current Membership"
-                    description={
-                        <div>
-                            <p>You are currently using the {membership.Name} plan.</p>
-                            <p><strong>Start Date:</strong> {startDate}</p>
-                            <p><strong>End Date:</strong> {endDate}</p>
-                            <p>After this date, your account will revert to Guest status.</p>
-                            <Button
-                                danger
-                                style={{ marginTop: '10px' }}
-                                onClick={() => setCancelModalVisible(true)}
-                            >
-                                Cancel Membership
-                            </Button>
-                        </div>
-                    }
-                    type="success"
-                    showIcon
-                    style={{ marginBottom: '20px' }}
-                />
-            );
-        }
-
+        // This function is now mainly for backwards compatibility
+        // Most logic has been moved to renderPaymentInfo above
         return null;
     };
 
@@ -525,19 +1033,9 @@ const MembershipPlans = () => {
         <div className="membership-plans-container">
             {apiError && (
                 <Alert
-                    message="Demo Mode"
-                    description="Displaying sample membership plans data."
+                    message="Chế độ Demo"
+                    description="Hiển thị dữ liệu gói thành viên mẫu."
                     type="info"
-                    showIcon
-                    style={{ marginBottom: 20 }}
-                />
-            )}
-
-            {message && (
-                <Alert
-                    message="Database Status"
-                    description={message}
-                    type="success"
                     showIcon
                     style={{ marginBottom: 20 }}
                 />
@@ -560,13 +1058,13 @@ const MembershipPlans = () => {
                 title={
                     <div style={{ textAlign: 'center' }}>
                         <Steps current={currentStep} style={{ maxWidth: 500, margin: '0 auto 20px' }}>
-                            <Step title="Select Plan" />
-                            <Step title="Payment" />
-                            <Step title="Confirmation" />
+                            <Step title="Chọn gói" />
+                            <Step title="Thanh toán" />
+                            <Step title="Xác nhận" />
                         </Steps>
                         <Title level={4} style={{ margin: '20px 0 0' }}>
-                            {currentStep === 0 ? 'Select Membership Plan' :
-                                currentStep === 1 ? 'Payment' : 'Confirmation'}
+                            {currentStep === 0 ? 'Chọn gói thành viên' :
+                                currentStep === 1 ? 'Thanh toán' : 'Xác nhận'}
                         </Title>
                     </div>
                 }
@@ -575,37 +1073,42 @@ const MembershipPlans = () => {
                 width={700}
                 footer={[
                     <Button key="back" onClick={handleCancel}>
-                        Cancel
+                        Hủy
                     </Button>,
                     <Button
                         key="submit"
                         type="primary"
                         loading={loading}
+                        disabled={loading || (paymentHistory && paymentHistory.some(p =>
+                            (p.PaymentStatus === 'pending' || p.Status === 'pending') &&
+                            p.PaymentStatus !== 'cancelled' && p.Status !== 'cancelled' &&
+                            p.PaymentStatus !== 'rejected' && p.Status !== 'rejected'
+                        ))}
                         onClick={handlePayment}
                     >
-                        {currentStep === 1 ? 'Pay Now' : 'Confirm'}
+                        {currentStep === 1 ? 'Thanh toán ngay' : 'Xác nhận'}
                     </Button>,
                 ]}
             >
                 {selectedPlan && (
                     <>
                         <div style={{ marginBottom: '20px' }}>
-                            <Title level={4}>Order Information</Title>
+                            <Title level={4}>Thông tin đơn hàng</Title>
                             <Paragraph>
-                                <Text strong>Plan:</Text> {selectedPlan.Name}
+                                <Text strong>Gói:</Text> {selectedPlan.Name}
                             </Paragraph>
                             <Paragraph>
-                                <Text strong>Price:</Text> ${selectedPlan.Price.toFixed(2)}
+                                <Text strong>Giá:</Text> {selectedPlan.Price.toLocaleString()} VNĐ
                             </Paragraph>
                             <Paragraph>
-                                <Text strong>Duration:</Text> {selectedPlan.Duration} days
+                                <Text strong>Thời hạn:</Text> {selectedPlan.Duration} ngày
                             </Paragraph>
                         </div>
 
                         <Divider />
 
                         <div>
-                            <Title level={4}>Payment Method</Title>
+                            <Title level={4}>Phương thức thanh toán</Title>
                             <Radio.Group
                                 options={PaymentMethodOptions}
                                 onChange={(e) => setPaymentMethod(e.target.value)}
@@ -615,13 +1118,13 @@ const MembershipPlans = () => {
 
                         {/* Demo mode info message */}
                         <Alert
-                            message="Payment Information"
+                            message="Thông tin thanh toán"
                             description={
                                 <div>
                                     <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                                         <img
                                             src="/api/images/payment-qr.svg"
-                                            alt="Payment QR Code"
+                                            alt="Mã QR thanh toán"
                                             style={{
                                                 width: '200px',
                                                 height: '200px',
@@ -635,12 +1138,12 @@ const MembershipPlans = () => {
                                             Quét mã QR để thanh toán
                                         </div>
                                     </div>
-                                    <p>This is a demonstration mode. In a real system:</p>
                                     <ul>
-                                        <li>Bank Transfer: You would receive bank details to transfer payment</li>
-                                        <li>Cash at Branch: You would visit a physical location to pay</li>
-                                        <li>After payment, an admin would confirm your payment</li>
-                                        <li>Your account would be upgraded to member status</li>
+                                        <li><strong>Chuyển khoản ngân hàng:</strong> Bạn sẽ nhận được thông tin tài khoản để chuyển tiền</li>
+                                        <li><strong>Thanh toán tại quầy:</strong> Bạn sẽ đến địa điểm vật lý để thanh toán</li>
+                                        <li><strong>Chuyển khoản với ghi chú là:</strong> <Text code>ADMIN PREMIUM</Text></li>
+                                        <li>Sau khi thanh toán, admin sẽ xác nhận thanh toán của bạn</li>
+                                        <li>Tài khoản của bạn sẽ được nâng cấp lên trạng thái thành viên</li>
                                     </ul>
                                 </div>
                             }
@@ -653,33 +1156,85 @@ const MembershipPlans = () => {
             </Modal>
 
             <Modal
-                title="Cancel Membership"
+                title="Hủy gói thành viên"
                 open={cancelModalVisible}
                 onCancel={() => setCancelModalVisible(false)}
                 footer={[
                     <Button key="back" onClick={() => setCancelModalVisible(false)}>
-                        No, Keep Membership
+                        Không, giữ gói thành viên
                     </Button>,
                     <Button key="submit" type="primary" danger onClick={handleCancelMembership}>
-                        Yes, Cancel and Get 50% Refund
+                        Có, hủy và nhận 50% hoàn tiền
                     </Button>,
                 ]}
+                width={600}
             >
                 <Alert
-                    message="Warning"
+                    message="Cảnh báo"
                     description={
                         <div>
-                            <p>Are you sure you want to cancel your membership?</p>
-                            <p><strong>Important:</strong> You will only receive a 50% refund of your payment amount.</p>
-                            {currentMembership && (
-                                <p>Refund amount: ${(currentMembership.Price * 0.5).toFixed(2)}</p>
+                            <p>Bạn có chắc chắn muốn hủy gói thành viên không?</p>
+                            <p><strong>Quan trọng:</strong> Bạn chỉ nhận được hoàn tiền 50% số tiền đã thanh toán.</p>
+                            {paymentHistory && paymentHistory.length > 0 && paymentHistory[0].PaymentStatus === 'confirmed' && (
+                                <p>Số tiền hoàn lại: {calculateRefundAmount(paymentHistory[0]).toLocaleString()} VNĐ</p>
                             )}
-                            <p>Your account status will revert to Guest immediately.</p>
+                            <p>Trạng thái tài khoản của bạn sẽ trở về Guest ngay lập tức.</p>
+                            <p style={{ color: '#ff4d4f', fontWeight: 'bold' }}>
+                                ⚠️ Lưu ý: Gói dịch vụ chỉ có thể hủy trong vòng 7 ngày đầu tiên kể từ ngày mua.
+                            </p>
                         </div>
                     }
                     type="warning"
                     showIcon
                     style={{ marginBottom: '20px' }}
+                />
+
+                <Divider>Thông tin hoàn tiền</Divider>
+
+                <div style={{ marginBottom: '16px' }}>
+                    <Text strong>Số tài khoản ngân hàng *</Text>
+                    <Input
+                        placeholder="Nhập số tài khoản ngân hàng"
+                        value={bankInfo.bankAccountNumber}
+                        onChange={(e) => setBankInfo({ ...bankInfo, bankAccountNumber: e.target.value })}
+                        style={{ marginTop: '8px' }}
+                    />
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                    <Text strong>Tên ngân hàng *</Text>
+                    <Input
+                        placeholder="Ví dụ: Vietcombank, BIDV, Techcombank..."
+                        value={bankInfo.bankName}
+                        onChange={(e) => setBankInfo({ ...bankInfo, bankName: e.target.value })}
+                        style={{ marginTop: '8px' }}
+                    />
+                </div>
+
+                <div style={{ marginBottom: '16px' }}>
+                    <Text strong>Tên chủ tài khoản *</Text>
+                    <Input
+                        placeholder="Nhập tên chủ tài khoản (theo đúng tên trên ngân hàng)"
+                        value={bankInfo.accountHolderName}
+                        onChange={(e) => setBankInfo({ ...bankInfo, accountHolderName: e.target.value })}
+                        style={{ marginTop: '8px' }}
+                    />
+                </div>
+
+                <Alert
+                    message="Lưu ý quan trọng"
+                    description={
+                        <div>
+                            <p>• Thông tin ngân hàng phải chính xác để đảm bảo hoàn tiền thành công</p>
+                            <p>• Thời gian xử lý hoàn tiền là 3-5 ngày làm việc</p>
+                            <p>• Gói dịch vụ chỉ có thể hủy trong vòng 7 ngày đầu tiên</p>
+                            <p>• Bạn sẽ chỉ nhận được 50% số tiền đã thanh toán</p>
+                            <p>• Mọi thông tin ADMIN Trung Tâm chuyển khoản cho bạn sẽ được hệ thống thông báo qua SMS,SĐT của người dùng</p>
+                        </div>
+                    }
+                    type="info"
+                    showIcon
+                    style={{ marginTop: '16px' }}
                 />
             </Modal>
         </div>

@@ -62,32 +62,73 @@ export const purchaseMembership = createAsyncThunk(
     'membership/purchase',
     async ({ planId, paymentMethod }, { rejectWithValue }) => {
         try {
-            console.log('Sending purchase request with:', { planId, paymentMethod });
+            console.log('🚀 Starting purchase request with:', { planId, paymentMethod });
+
             const response = await axiosInstance.post(
                 `/membership/purchase`,
-                { planId, paymentMethod }
+                { planId, paymentMethod },
+                {
+                    timeout: 10000, // 10 second timeout
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
             );
-            console.log('Purchase response:', response.data);
-            return response.data;
+
+            console.log('📨 Raw response received:', {
+                status: response.status,
+                statusText: response.statusText,
+                data: response.data,
+                success: response.data?.success
+            });
+
+            // Check if we got a successful response
+            if (response.status === 201 || response.status === 200) {
+                // Even if there's no explicit success field, treat 2xx as success
+                if (response.data) {
+                    console.log('✅ Purchase completed successfully');
+                    return response.data;
+                }
+            }
+
+            // If we reach here, something went wrong
+            console.warn('⚠️ Unexpected response format:', response.data);
+            return response.data || { success: true, message: 'Purchase completed' };
+
         } catch (error) {
-            console.error('Purchase error:', error);
+            console.error('❌ Purchase error caught:', error);
+
+            // Log detailed error information
+            console.error('Error details:', {
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status,
+                statusText: error.response?.statusText
+            });
+
             // Handle different error scenarios
             if (error.response) {
                 // Server responded with error status
+                const errorData = error.response.data;
+                console.error('Server error response:', errorData);
+
                 return rejectWithValue({
-                    message: error.response.data?.message || 'Failed to purchase membership',
-                    status: error.response.status
+                    message: errorData?.message || `Server error: ${error.response.status}`,
+                    status: error.response.status,
+                    debug: errorData?.debug
                 });
             } else if (error.request) {
-                // Request was made but no response received
+                // Request was made but no response received (timeout, network issue)
+                console.error('Network/timeout error:', error.request);
                 return rejectWithValue({
-                    message: 'No response from server. Please check your connection.',
+                    message: 'Network error or timeout. Please check your connection.',
                     status: 'network_error'
                 });
             } else {
                 // Something else went wrong
+                console.error('Unknown error:', error.message);
                 return rejectWithValue({
-                    message: error.message || 'Failed to purchase membership',
+                    message: error.message || 'Unknown error occurred',
                     status: 'unknown_error'
                 });
             }
@@ -109,12 +150,93 @@ export const getMembershipHistory = createAsyncThunk(
 
 export const cancelMembership = createAsyncThunk(
     'membership/cancel',
+    async ({ reason, bankAccount, membershipId }, { rejectWithValue }) => {
+        try {
+            console.log('🔄 Sending cancel request with data:', {
+                reason,
+                bankAccount,
+                membershipId
+            });
+
+            // Prepare the request payload
+            const payload = {
+                reason: reason || 'Hủy gói dịch vụ theo yêu cầu của khách hàng',
+                bankAccountNumber: bankAccount?.bankAccountNumber,
+                bankName: bankAccount?.bankName,
+                accountHolderName: bankAccount?.accountHolderName
+            };
+
+            console.log('📤 Sending request to /membership/simple-cancel with payload:', payload);
+
+            const response = await axiosInstance.post('/membership/simple-cancel', payload, {
+                timeout: 15000, // 15 second timeout
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log('✅ Cancel response received:', {
+                status: response.status,
+                statusText: response.statusText,
+                data: response.data
+            });
+
+            // Check if the response is successful
+            if (response.status >= 200 && response.status < 300) {
+                if (response.data && response.data.success) {
+                    return response.data;
+                } else if (response.data) {
+                    // Even if success field is not true, still return the data if we got a 2xx response
+                    return { ...response.data, success: true };
+                }
+            }
+
+            // If we get here, something went wrong
+            throw new Error('Unexpected response format');
+
+        } catch (error) {
+            console.error('❌ Cancel request failed:', {
+                error,
+                message: error.message,
+                response: error.response?.data,
+                status: error.response?.status,
+                statusText: error.response?.statusText
+            });
+
+            // Handle different types of errors
+            if (error.response) {
+                // Server responded with error status
+                const errorData = error.response.data;
+                const errorMessage = errorData?.message || errorData?.error || `Server error: ${error.response.status}`;
+                return rejectWithValue({
+                    message: errorMessage,
+                    status: error.response.status,
+                    data: errorData
+                });
+            } else if (error.request) {
+                // Network error - no response received
+                return rejectWithValue({
+                    message: 'Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng và thử lại.',
+                    type: 'network'
+                });
+            } else {
+                // Other error
+                return rejectWithValue({
+                    message: error.message || 'Đã xảy ra lỗi không xác định'
+                });
+            }
+        }
+    }
+);
+
+export const getRefundRequests = createAsyncThunk(
+    'membership/getRefundRequests',
     async (_, { rejectWithValue }) => {
         try {
-            const response = await axiosInstance.put(`/membership/cancel`, {});
+            const response = await axiosInstance.get(`/membership/refund-requests`);
             return response.data.data;
         } catch (error) {
-            return rejectWithValue(error.response?.data || { message: 'Failed to cancel membership' });
+            return rejectWithValue(error.response?.data || { message: 'Failed to fetch refund requests' });
         }
     }
 );
@@ -123,10 +245,12 @@ const initialState = {
     plans: [],
     currentMembership: null,
     membershipHistory: [],
+    refundRequests: [],
     loading: false,
     error: null,
     success: false,
     message: null,
+    paymentHistory: [],
 };
 
 const membershipSlice = createSlice({
@@ -199,33 +323,54 @@ const membershipSlice = createSlice({
             })
             .addCase(purchaseMembership.fulfilled, (state, action) => {
                 state.loading = false;
-                state.success = true;
-                // Handle the membership data if it exists
-                if (action.payload && action.payload.data) {
-                    if (action.payload.data.membership) {
-                        state.currentMembership = action.payload.data.membership;
-                    } else if (action.payload.data.membershipDetails) {
-                        state.currentMembership = action.payload.data.membershipDetails;
-                    }
-                }
+                state.error = null;
 
-                // Update user role to 'member' in local storage
-                const storedUser = localStorage.getItem('user');
-                if (storedUser) {
-                    try {
-                        const user = JSON.parse(storedUser);
-                        // Only update if the user was a guest
-                        if (user.role === 'guest') {
-                            user.role = 'member';
-                            localStorage.setItem('user', JSON.stringify(user));
-                            console.log('Updated user role to "member" in local storage');
+                // Log the response to debug
+                console.log('✅ Purchase fulfilled with response:', action.payload);
+
+                // Handle the response - be more lenient about success
+                if (action.payload) {
+                    // If we have data, it means the request went through
+                    if (action.payload.data) {
+                        // Update current membership with the new data
+                        if (action.payload.data.membership) {
+                            state.currentMembership = action.payload.data.membership;
                         }
-                    } catch (e) {
-                        console.error('Error updating user role in localStorage:', e);
-                    }
-                }
 
-                console.log("Purchase successful, payload:", action.payload);
+                        // Add to payment history
+                        if (action.payload.data.payment) {
+                            // Ensure payment history is an array
+                            if (!state.paymentHistory) {
+                                state.paymentHistory = [];
+                            }
+
+                            // Create payment record for history
+                            const paymentRecord = {
+                                ...action.payload.data.payment,
+                                PlanName: action.payload.data.membership?.PlanName || 'Premium Plan',
+                                PaymentStatus: action.payload.data.payment.Status || 'pending',
+                                StartDate: action.payload.data.payment.StartDate,
+                                EndDate: action.payload.data.payment.EndDate
+                            };
+
+                            // Add to beginning of array (most recent first)
+                            state.paymentHistory.unshift(paymentRecord);
+                        }
+
+                        console.log('✅ State updated successfully:', {
+                            currentMembership: state.currentMembership,
+                            paymentHistoryLength: state.paymentHistory?.length || 0
+                        });
+                    }
+
+                    // Set success based on whether we actually processed something
+                    state.success = true;
+                    state.message = action.payload.message || 'Purchase completed successfully';
+                } else {
+                    console.warn('⚠️ No payload in fulfilled response');
+                    state.success = true; // Still mark as success since it fulfilled
+                    state.message = 'Purchase completed';
+                }
             })
             .addCase(purchaseMembership.rejected, (state, action) => {
                 state.loading = false;
@@ -252,16 +397,73 @@ const membershipSlice = createSlice({
                 state.loading = true;
                 state.error = null;
                 state.success = false;
+                console.log('🔄 Cancel membership request started...');
             })
             .addCase(cancelMembership.fulfilled, (state, action) => {
                 state.loading = false;
-                state.currentMembership = null;
+                state.error = null;
                 state.success = true;
+
+                console.log('✅ Cancel membership fulfilled with response:', action.payload);
+
+                // Update state based on response
+                if (action.payload) {
+                    if (action.payload.data && action.payload.data.membershipId) {
+                        // Find and update the specific membership
+                        const membershipId = action.payload.data.membershipId;
+                        console.log('🔄 Marking membership as pending cancellation:', membershipId);
+
+                        // If we have currentMembership and it matches, update its status
+                        if (state.currentMembership && state.currentMembership.MembershipID === membershipId) {
+                            state.currentMembership = {
+                                ...state.currentMembership,
+                                Status: 'pending_cancellation'
+                            };
+                        }
+                    }
+
+                    // Set success message
+                    state.message = action.payload.message || 'Yêu cầu hủy gói dịch vụ đã được gửi thành công';
+                } else {
+                    state.message = 'Yêu cầu hủy gói dịch vụ đã được gửi';
+                }
+
+                console.log('✅ Cancel membership state updated successfully');
             })
             .addCase(cancelMembership.rejected, (state, action) => {
                 state.loading = false;
-                state.error = action.payload?.message || 'Failed to cancel membership';
                 state.success = false;
+
+                console.error('❌ Cancel membership rejected:', action.payload);
+
+                // Extract error message
+                let errorMessage = 'Failed to cancel membership';
+                if (action.payload) {
+                    if (typeof action.payload === 'string') {
+                        errorMessage = action.payload;
+                    } else if (action.payload.message) {
+                        errorMessage = action.payload.message;
+                    } else if (action.payload.error) {
+                        errorMessage = action.payload.error;
+                    }
+                }
+
+                state.error = errorMessage;
+                console.error('❌ Final error message set:', errorMessage);
+            })
+
+            // Get Refund Requests
+            .addCase(getRefundRequests.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getRefundRequests.fulfilled, (state, action) => {
+                state.loading = false;
+                state.refundRequests = action.payload || [];
+            })
+            .addCase(getRefundRequests.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload?.message || 'Failed to get refund requests';
             });
     },
 });

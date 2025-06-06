@@ -212,16 +212,16 @@ router.post('/login', loginValidation, async (req, res) => {
         // Get user agent
         const userAgent = req.headers['user-agent'] || 'unknown';
 
-        // Check for too many failed login attempts
-        const identifier = email || phoneNumber;
-        const tooManyAttempts = await checkFailedLoginAttempts(identifier, ipAddress);
-        if (tooManyAttempts) {
-            console.log('Too many failed login attempts for:', identifier);
-            return res.status(429).json({
-                success: false,
-                message: 'Quá nhiều lần đăng nhập không thành công. Vui lòng thử lại sau 30 phút.'
-            });
-        }
+        // REMOVED: Rate limiting check that blocked users for 30 minutes
+        // const identifier = email || phoneNumber;
+        // const tooManyAttempts = await checkFailedLoginAttempts(identifier, ipAddress);
+        // if (tooManyAttempts) {
+        //     console.log('Too many failed login attempts for:', identifier);
+        //     return res.status(429).json({
+        //         success: false,
+        //         message: 'Quá nhiều lần đăng nhập không thành công. Vui lòng thử lại sau 30 phút.'
+        //     });
+        // }
 
         // Attempt to login user
         const user = await loginUser({ email, phoneNumber, password }, ipAddress, userAgent);

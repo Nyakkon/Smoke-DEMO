@@ -48,7 +48,8 @@ const AchievementBadge = ({ achievement, earnedAt }) => {
                 src={achievement.IconURL}
                 alt={achievement.Name}
                 onError={(e) => {
-                    e.target.src = '/images/achievements/default-badge.png';
+                    e.target.onerror = null;
+                    e.target.src = '/api/images/achievements/default-badge.png';
                 }}
             />
             <BadgeTitle variant="h6">

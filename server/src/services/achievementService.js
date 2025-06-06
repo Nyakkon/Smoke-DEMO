@@ -89,7 +89,7 @@ class AchievementService {
                 .input('UserID', userId)
                 .query(`
                     SELECT 
-                        COALESCE(MAX(DaysSmokeFree), 0) as DaysSmokeFree,
+                        COUNT(CASE WHEN CigarettesSmoked = 0 THEN 1 END) as SmokeFreeDays,
                         COALESCE(SUM(MoneySaved), 0) as TotalMoneySaved,
                         COUNT(*) as ProgressEntries,
                         MIN(Date) as FirstEntry,
@@ -99,38 +99,21 @@ class AchievementService {
                 `);
 
             const progressData = result.recordset[0] || {
-                DaysSmokeFree: 0,
+                SmokeFreeDays: 0,
                 TotalMoneySaved: 0,
                 ProgressEntries: 0,
                 FirstEntry: null,
                 LastEntry: null
             };
 
-            // Calculate days since quit plan started
-            const quitPlanResult = await pool.request()
-                .input('UserID', userId)
-                .query(`
-                    SELECT TOP 1 StartDate
-                    FROM QuitPlans 
-                    WHERE UserID = @UserID 
-                    AND Status = 'active'
-                    ORDER BY StartDate DESC
-                `);
-
-            if (quitPlanResult.recordset.length > 0) {
-                const startDate = new Date(quitPlanResult.recordset[0].StartDate);
-                const now = new Date();
-                const daysSinceStart = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
-                progressData.DaysSinceQuitStart = Math.max(0, daysSinceStart);
-            } else {
-                progressData.DaysSinceQuitStart = 0;
-            }
+            // Use SmokeFreeDays as the main metric for milestone achievements
+            progressData.DaysSinceQuitStart = progressData.SmokeFreeDays;
 
             return progressData;
         } catch (error) {
             console.error('Error getting progress data:', error);
             return {
-                DaysSmokeFree: 0,
+                SmokeFreeDays: 0,
                 TotalMoneySaved: 0,
                 ProgressEntries: 0,
                 DaysSinceQuitStart: 0

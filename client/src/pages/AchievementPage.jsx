@@ -46,6 +46,52 @@ const AchievementPage = () => {
     const [databaseError, setDatabaseError] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
 
+    // Helper function to render achievement icon
+    const renderAchievementIcon = (achievement, actuallyEarned, shouldShowEligible) => {
+        const iconUrl = achievement.IconURL;
+
+        // If no IconURL, show default emojis based on status
+        if (!iconUrl) {
+            return (
+                <span style={{ fontSize: '64px' }}>
+                    {actuallyEarned ? '🏆' : shouldShowEligible ? '🎯' : '🔒'}
+                </span>
+            );
+        }
+
+        // If IconURL is already an emoji (length <= 4 and not a path)
+        if (iconUrl.length <= 4 && !/^\/|^http|\.png|\.jpg|\.gif|\.svg/i.test(iconUrl)) {
+            return <span style={{ fontSize: '64px' }}>{iconUrl}</span>;
+        }
+
+        // If IconURL looks like an image path, show actual image
+        if (/\/images\/|\/api\/images\/|\.png|\.jpg|\.gif|\.svg/i.test(iconUrl)) {
+            return (
+                <img
+                    src={iconUrl}
+                    alt={achievement.Name}
+                    style={{
+                        width: '64px',
+                        height: '64px',
+                        objectFit: 'contain',
+                        filter: actuallyEarned ? 'none' : shouldShowEligible ? 'none' : 'grayscale(100%) opacity(0.5)'
+                    }}
+                    onError={(e) => {
+                        // Fallback to emoji if image fails to load
+                        e.target.outerHTML = `<span style="font-size: 64px">${actuallyEarned ? '🏆' : shouldShowEligible ? '🎯' : '🔒'}</span>`;
+                    }}
+                />
+            );
+        }
+
+        // Default case - show emoji
+        return (
+            <span style={{ fontSize: '64px' }}>
+                {actuallyEarned ? '🏆' : shouldShowEligible ? '🎯' : '🔒'}
+            </span>
+        );
+    };
+
     useEffect(() => {
         if (user) {
             fetchAllData();
@@ -192,7 +238,7 @@ const AchievementPage = () => {
             if (response.data.success) {
                 message.success(response.data.message);
 
-                if (response.data.newAchievements.length > 0) {
+                if (response.data.newAchievements && response.data.newAchievements.length > 0) {
                     // Show notification for new achievements
                     response.data.newAchievements.forEach(achievement => {
                         message.success(`🏆 Mở khóa huy hiệu: ${achievement.Name}`, 5);
@@ -202,14 +248,92 @@ const AchievementPage = () => {
                 // Refresh data
                 await fetchAllData();
             } else {
-                message.error(response.data.message || 'Lỗi khi kiểm tra huy hiệu');
+                // Handle case where user doesn't have progress data
+                if (response.data.needsProgress) {
+                    message.warning('Bạn cần ghi nhật ký tiến trình trước khi có thể nhận huy hiệu!');
+                } else {
+                    message.info(response.data.message || 'Không có huy hiệu mới để mở khóa');
+                }
+
+                // Show debug info if available
+                if (response.data.debug) {
+                    console.log('🔍 Achievement Debug Info:', response.data.debug);
+                }
             }
         } catch (error) {
             console.error('Error fixing achievements:', error);
-            message.error('Lỗi khi kiểm tra huy hiệu: ' + (error.response?.data?.message || error.message));
+
+            if (error.response?.data?.message) {
+                message.error(error.response.data.message);
+            } else {
+                message.error('Lỗi khi kiểm tra huy hiệu: ' + error.message);
+            }
         } finally {
             setLoading(false);
         }
+    };
+
+    const clearAchievements = async () => {
+        try {
+            setLoading(true);
+            const token = localStorage.getItem('token');
+
+            if (!token) {
+                message.error('Vui lòng đăng nhập để xóa huy hiệu');
+                return;
+            }
+
+            const response = await axios.post('/api/achievements/clear-my-achievements', {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (response.data.success) {
+                message.success(response.data.message);
+                await fetchAllData();
+            } else {
+                message.error(response.data.message || 'Lỗi khi xóa huy hiệu');
+            }
+        } catch (error) {
+            console.error('Error clearing achievements:', error);
+            message.error('Lỗi khi xóa huy hiệu: ' + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const isAchievementEarned = (achievementId) => {
+        return earnedAchievements.some(earned => earned.AchievementID === achievementId);
+    };
+
+    const isAchievementEligible = (achievement) => {
+        // Check if achievement has IsEligible property from API
+        if (achievement.hasOwnProperty('IsEligible')) {
+            return achievement.IsEligible === 1;
+        }
+
+        // Fallback: check eligibility based on progress data
+        if (!progressData) return false;
+
+        // For milestone days achievements
+        if (achievement.MilestoneDays !== null) {
+            const current = progressData.SmokeFreeDays || 0;
+            const required = achievement.MilestoneDays;
+            return current >= required;
+        }
+
+        // For saved money achievements  
+        if (achievement.SavedMoney !== null) {
+            const current = progressData.TotalMoneySaved || 0;
+            const required = achievement.SavedMoney;
+            return current >= required;
+        }
+
+        // For special achievements (no specific requirements), check earned status
+        if (achievement.MilestoneDays === null && achievement.SavedMoney === null) {
+            return isAchievementEarned(achievement.AchievementID);
+        }
+
+        return false;
     };
 
     const getProgressToNextAchievement = (achievement) => {
@@ -234,10 +358,6 @@ const AchievementPage = () => {
         }
 
         return { progress: 0, total: 100, current: 0 };
-    };
-
-    const isAchievementEarned = (achievementId) => {
-        return earnedAchievements.some(earned => earned.AchievementID === achievementId);
     };
 
     const getEarnedDate = (achievementId) => {
@@ -357,13 +477,11 @@ const AchievementPage = () => {
                                     Làm mới
                                 </Button>
                                 <Button
-                                    type="default"
-                                    icon={<TrophyOutlined />}
-                                    onClick={fixAchievements}
+                                    danger
+                                    onClick={clearAchievements}
                                     loading={loading}
-                                    style={{ backgroundColor: '#faad14', borderColor: '#faad14', color: 'white' }}
                                 >
-                                    Kiểm tra huy hiệu
+                                    Reset huy hiệu
                                 </Button>
                             </Space>
                         </Col>
@@ -377,7 +495,11 @@ const AchievementPage = () => {
                             <Col xs={12} sm={6}>
                                 <div style={{ textAlign: 'center' }}>
                                     <div style={{ fontSize: '32px', color: '#52c41a' }}>
-                                        {earnedAchievements.length}
+                                        {achievements.filter(achievement => {
+                                            const isEarned = isAchievementEarned(achievement.AchievementID);
+                                            const isEligible = isAchievementEligible(achievement);
+                                            return isEarned && isEligible; // Only count if both earned AND eligible
+                                        }).length}
                                     </div>
                                     <Text>Huy hiệu đã đạt</Text>
                                 </div>
@@ -403,7 +525,11 @@ const AchievementPage = () => {
                                     <div style={{ fontSize: '32px', color: '#722ed1' }}>
                                         {Math.round(
                                             achievements.length > 0
-                                                ? (earnedAchievements.length / achievements.length) * 100
+                                                ? (achievements.filter(achievement => {
+                                                    const isEarned = isAchievementEarned(achievement.AchievementID);
+                                                    const isEligible = isAchievementEligible(achievement);
+                                                    return isEarned && isEligible; // Only count if both earned AND eligible
+                                                }).length / achievements.length) * 100
                                                 : 0
                                         )}%
                                     </div>
@@ -418,8 +544,14 @@ const AchievementPage = () => {
                 <Row gutter={[16, 16]}>
                     {achievements.map((achievement) => {
                         const isEarned = isAchievementEarned(achievement.AchievementID);
+                        const isEligible = isAchievementEligible(achievement);
                         const earnedDate = getEarnedDate(achievement.AchievementID);
                         const progressInfo = getProgressToNextAchievement(achievement);
+
+                        // OVERRIDE: Only show as earned if both database says earned AND user is eligible
+                        const actuallyEarned = isEarned && isEligible;
+                        const shouldShowEligible = !actuallyEarned && isEligible;
+                        const isLocked = !actuallyEarned && !isEligible;
 
                         return (
                             <Col xs={24} sm={12} lg={8} key={achievement.AchievementID}>
@@ -427,10 +559,19 @@ const AchievementPage = () => {
                                     hoverable
                                     style={{
                                         position: 'relative',
-                                        opacity: isEarned ? 1 : 0.7,
-                                        border: isEarned ? '2px solid #52c41a' : '1px solid #d9d9d9'
+                                        opacity: actuallyEarned ? 1 : shouldShowEligible ? 0.9 : 0.5,
+                                        border: actuallyEarned
+                                            ? '2px solid #52c41a'
+                                            : shouldShowEligible
+                                                ? '2px solid #faad14'
+                                                : '1px solid #d9d9d9',
+                                        backgroundColor: actuallyEarned
+                                            ? '#f6ffed'
+                                            : shouldShowEligible
+                                                ? '#fffbe6'
+                                                : '#fafafa'
                                     }}
-                                    actions={isEarned ? [
+                                    actions={actuallyEarned ? [
                                         <Tooltip title="Chia sẻ thành tích">
                                             <Button
                                                 type="text"
@@ -440,9 +581,20 @@ const AchievementPage = () => {
                                                 Chia sẻ
                                             </Button>
                                         </Tooltip>
+                                    ] : shouldShowEligible ? [
+                                        <Tooltip title="Bạn đã đủ điều kiện! Nhấn để mở khóa">
+                                            <Button
+                                                type="primary"
+                                                icon={<TrophyOutlined />}
+                                                onClick={fixAchievements}
+                                                style={{ backgroundColor: '#faad14', borderColor: '#faad14' }}
+                                            >
+                                                Mở khóa
+                                            </Button>
+                                        </Tooltip>
                                     ] : []}
                                 >
-                                    {isEarned && (
+                                    {actuallyEarned && (
                                         <Badge.Ribbon
                                             text="Đã đạt"
                                             color="green"
@@ -453,14 +605,53 @@ const AchievementPage = () => {
                                         />
                                     )}
 
+                                    {shouldShowEligible && (
+                                        <Badge.Ribbon
+                                            text="Sẵn sàng mở khóa"
+                                            color="orange"
+                                            style={{
+                                                fontSize: '12px',
+                                                fontWeight: 'bold'
+                                            }}
+                                        />
+                                    )}
+
+                                    {isLocked && (
+                                        <Badge.Ribbon
+                                            text="Chưa đủ điều kiện"
+                                            color="red"
+                                            style={{
+                                                fontSize: '12px',
+                                                fontWeight: 'bold'
+                                            }}
+                                        />
+                                    )}
+
                                     <div style={{ textAlign: 'center', marginBottom: 16 }}>
-                                        <div style={{ fontSize: '64px', marginBottom: 8, filter: isEarned ? 'none' : 'grayscale(100%)' }}>                                            {achievement.IconURL && achievement.IconURL.length <= 4 ? (achievement.IconURL) : (isEarned ? '🏆' : '🔒')}                                        </div>
+                                        <div style={{
+                                            marginBottom: 8,
+                                            lineHeight: 1,
+                                            display: 'flex',
+                                            justifyContent: 'center',
+                                            alignItems: 'center'
+                                        }}>
+                                            {renderAchievementIcon(achievement, actuallyEarned, shouldShowEligible)}
+                                        </div>
 
                                         <Title level={4} style={{
                                             margin: 0,
-                                            color: isEarned ? '#52c41a' : '#8c8c8c'
+                                            color: actuallyEarned
+                                                ? '#52c41a'
+                                                : shouldShowEligible
+                                                    ? '#faad14'
+                                                    : '#8c8c8c'
                                         }}>
-                                            {isEarned ? <CheckCircleOutlined /> : <LockOutlined />}
+                                            {actuallyEarned
+                                                ? <CheckCircleOutlined />
+                                                : shouldShowEligible
+                                                    ? <TrophyOutlined />
+                                                    : <LockOutlined />
+                                            }
                                             {' '}{achievement.Name}
                                         </Title>
                                     </div>
@@ -473,13 +664,24 @@ const AchievementPage = () => {
                                         <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                                 <Text type="secondary">
-                                                    <CalendarOutlined /> {achievement.MilestoneDays} ngày
+                                                    <CalendarOutlined /> {achievement.MilestoneDays} ngày không hút
                                                 </Text>
-                                                <Text>
+                                                <Text style={{
+                                                    color: progressInfo.current >= achievement.MilestoneDays ? '#52c41a' : '#8c8c8c',
+                                                    fontWeight: progressInfo.current >= achievement.MilestoneDays ? 'bold' : 'normal'
+                                                }}>
                                                     {progressInfo.current}/{progressInfo.total}
+                                                    {progressInfo.current >= achievement.MilestoneDays && !actuallyEarned && ' ✅'}
                                                 </Text>
                                             </div>
-                                            <Progress percent={progressInfo.progress} size="small" status={isEarned ? 'success' : 'active'} showInfo={true} format={(percent) => `${percent}%`} />
+                                            <Progress
+                                                percent={progressInfo.progress}
+                                                size="small"
+                                                status={actuallyEarned ? 'success' : progressInfo.current >= achievement.MilestoneDays ? 'normal' : 'active'}
+                                                showInfo={true}
+                                                format={(percent) => `${percent}%`}
+                                                strokeColor={progressInfo.current >= achievement.MilestoneDays ? '#faad14' : undefined}
+                                            />
                                         </Space>
                                     )}
 
@@ -489,15 +691,26 @@ const AchievementPage = () => {
                                                 <Text type="secondary">
                                                     <DollarOutlined /> {achievement.SavedMoney.toLocaleString('vi-VN')} VNĐ
                                                 </Text>
-                                                <Text>
+                                                <Text style={{
+                                                    color: progressInfo.current >= achievement.SavedMoney ? '#52c41a' : '#8c8c8c',
+                                                    fontWeight: progressInfo.current >= achievement.SavedMoney ? 'bold' : 'normal'
+                                                }}>
                                                     {Math.round(progressInfo.current).toLocaleString('vi-VN')}/{progressInfo.total.toLocaleString('vi-VN')}
+                                                    {progressInfo.current >= achievement.SavedMoney && !actuallyEarned && ' ✅'}
                                                 </Text>
                                             </div>
-                                            <Progress percent={progressInfo.progress} size="small" status={isEarned ? 'success' : 'active'} showInfo={true} format={(percent) => `${percent}%`} />
+                                            <Progress
+                                                percent={progressInfo.progress}
+                                                size="small"
+                                                status={actuallyEarned ? 'success' : progressInfo.current >= achievement.SavedMoney ? 'normal' : 'active'}
+                                                showInfo={true}
+                                                format={(percent) => `${percent}%`}
+                                                strokeColor={progressInfo.current >= achievement.SavedMoney ? '#faad14' : undefined}
+                                            />
                                         </Space>
                                     )}
 
-                                    {isEarned && earnedDate && (
+                                    {actuallyEarned && earnedDate && (
                                         <>
                                             <Divider style={{ margin: '12px 0' }} />
                                             <Text type="secondary" style={{ fontSize: '12px' }}>
@@ -505,6 +718,32 @@ const AchievementPage = () => {
                                                     addSuffix: true,
                                                     locale: vi
                                                 })}
+                                            </Text>
+                                        </>
+                                    )}
+
+                                    {!actuallyEarned && !shouldShowEligible && (
+                                        <>
+                                            <Divider style={{ margin: '12px 0' }} />
+                                            <Text type="secondary" style={{ fontSize: '12px', textAlign: 'center' }}>
+                                                {achievement.MilestoneDays !== null &&
+                                                    `Cần thêm ${Math.max(0, achievement.MilestoneDays - (progressInfo.current || 0))} ngày không hút thuốc`
+                                                }
+                                                {achievement.SavedMoney !== null &&
+                                                    `Cần tiết kiệm thêm ${Math.max(0, achievement.SavedMoney - (progressInfo.current || 0)).toLocaleString('vi-VN')} VNĐ`
+                                                }
+                                                {achievement.MilestoneDays === null && achievement.SavedMoney === null &&
+                                                    'Huy hiệu đặc biệt - cần điều kiện đặc biệt'
+                                                }
+                                            </Text>
+                                        </>
+                                    )}
+
+                                    {!actuallyEarned && shouldShowEligible && (
+                                        <>
+                                            <Divider style={{ margin: '12px 0' }} />
+                                            <Text style={{ fontSize: '12px', textAlign: 'center', color: '#faad14', fontWeight: 'bold' }}>
+                                                🎉 Bạn đã đủ điều kiện! Nhấn "Mở khóa" để nhận huy hiệu
                                             </Text>
                                         </>
                                     )}
